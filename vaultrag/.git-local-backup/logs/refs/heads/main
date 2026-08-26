@@ -1,0 +1,5 @@
+0000000000000000000000000000000000000000 c06aea3235d152608bdcf4ffa0b17856d29dd19b cmyyy <26576058+cmyyy@users.noreply.github.com> 1786978590 +0800	commit (initial): feat: vaultrag context engine — vault RAG with hybrid retrieval + rerank
+c06aea3235d152608bdcf4ffa0b17856d29dd19b 6330871184e477347c552992392401419becd27b cmyyy <26576058+cmyyy@users.noreply.github.com> 1786978772 +0800	commit: fix: forward threshold_tokens/context_length/protect_* to delegate
+6330871184e477347c552992392401419becd27b f3d4fddf4e172b601db7f117ed5f5d5de4f0ca12 cmyyy <26576058+cmyyy@users.noreply.github.com> 1786979041 +0800	commit: docs: record preflight '>= 0 threshold' display bug in troubleshooting
+f3d4fddf4e172b601db7f117ed5f5d5de4f0ca12 f3d4fddf4e172b601db7f117ed5f5d5de4f0ca12 cmyyy <26576058+cmyyy@users.noreply.github.com> 1786979935 +0800	Branch: renamed refs/heads/master to refs/heads/main
+f3d4fddf4e172b601db7f117ed5f5d5de4f0ca12 6f262636e4b53d3504c665f8535c5225ce531ed5 cmyyy <26576058+cmyyy@users.noreply.github.com> 1786981987 +0800	commit: fix: load compression config from config.yaml into delegate

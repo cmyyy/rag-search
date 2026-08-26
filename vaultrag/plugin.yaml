@@ -1,0 +1,5 @@
+name: vaultrag
+version: 0.1.0
+description: "Vault RAG context engine — retrieves relevant notes from an Obsidian vault and injects them into the request context. Requires EMBEDDING_API_KEY + vault path (default: OBSIDIAN_VAULT_PATH)."
+author: cmyyy
+kind: context-engine

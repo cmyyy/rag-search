@@ -1,0 +1,282 @@
+"""评测查询集（基于 llm-wiki 真实内容构造，2026-08-22）。
+
+三类查询：
+  - multi-hop（10 条）：答案分散在多篇笔记、且笔记间有 [[wikilink]] 双链关联——
+    正是"双链图扩展"要补的场景（A 笔记提概念、B 笔记有细节、双链相连）。
+  - single-hop（9 条）：对照组，单篇笔记内即可回答，图扩展不应帮倒忙。
+  - negative（5 条）：无关联查询（负样本），验证 guard 仍拦截（不注入）。
+
+每条查询给出 expected_notes（笔记 stem 集合，用于 hit@1 判定）。
+"""
+
+# 每条的 key：query / type / expected_notes（stem，不含 .md）
+QUERIES = [
+    # ---------- 多跳：跨笔记关联 ----------
+    {
+        "id": "mh-01",
+        "type": "multi-hop",
+        "query": "DB2 执行计划怎么影响慢 SQL 优化",
+        "expected_notes": [
+            "db2-execution-plan-slow-sql-optimization",
+            "2026-07-30",
+            "2026-08-01",
+        ],
+    },
+    {
+        "id": "mh-02",
+        "type": "multi-hop",
+        "query": "Hermes 压缩和 prompt cache 前缀稳定性是什么关系",
+        "expected_notes": [
+            "prompt-cache-prefix-stability",
+            "context-summarizer",
+            "hermes-compression-per-turn-state-reset",
+        ],
+    },
+    {
+        "id": "mh-03",
+        "type": "multi-hop",
+        "query": "MoA 聚合上下文注入在 Hermes 里是怎么实现的",
+        "expected_notes": [
+            "moa-mixture-of-agents",
+            "hermes-moa-context-injection",
+            "hermes-conversation-loop-run-conversation",
+        ],
+    },
+    {
+        "id": "mh-04",
+        "type": "multi-hop",
+        "query": "RRF 为什么比直接加权融合好，vaultrag 里是怎么用的",
+        "expected_notes": [
+            "rag-retrieval-pipeline",
+            "hermes-vaultrag-interview",
+            "vaultrag-positioning-and-evolution",
+        ],
+    },
+    {
+        "id": "mh-05",
+        "type": "multi-hop",
+        "query": "cross-encoder 为什么比 bi-encoder 准，RAG 为什么用两阶段",
+        "expected_notes": [
+            "cross-encoder",
+            "rag-retrieval-pipeline",
+        ],
+    },
+    {
+        "id": "mh-06",
+        "type": "multi-hop",
+        "query": "context engine 和压缩机制有什么区别，vaultrag 属于哪一类",
+        "expected_notes": [
+            "hermes-context-engine-selection",
+            "context-summarizer",
+            "vaultrag-positioning-and-evolution",
+        ],
+    },
+    {
+        "id": "mh-07",
+        "type": "multi-hop",
+        "query": "查询改写有哪几种策略，vaultrag 为什么当前没做",
+        "expected_notes": [
+            "query-rewriting",
+            "vaultrag-positioning-and-evolution",
+            "hermes-vaultrag-interview",
+        ],
+    },
+    {
+        "id": "mh-08",
+        "type": "multi-hop",
+        "query": "Hermes 压缩 in_place 模式为什么需要 _last_compaction_in_place 信号",
+        "expected_notes": [
+            "hermes-compression-per-turn-state-reset",
+            "context-summarizer",
+        ],
+    },
+    {
+        "id": "mh-09",
+        "type": "multi-hop",
+        "query": "TCC、Seata AT 和 Saga 三种分布式事务模式怎么选",
+        "expected_notes": [
+            "distributed-transactions-tcc-seata-saga",
+            "2026-08-03",
+        ],
+    },
+    {
+        "id": "mh-10",
+        "type": "multi-hop",
+        "query": "prompt cache 前缀稳定性给 Hermes 注入类机制带来什么设计约束",
+        "expected_notes": [
+            "prompt-cache-prefix-stability",
+            "hermes-context-engine-selection",
+            "vaultrag-positioning-and-evolution",
+        ],
+    },
+    # ---------- 单跳：对照 ----------
+    {
+        "id": "sh-01",
+        "type": "single-hop",
+        "query": "MoA 是什么",
+        "expected_notes": ["moa-mixture-of-agents"],
+    },
+    {
+        "id": "sh-02",
+        "type": "single-hop",
+        "query": "RRF 融合原理",
+        "expected_notes": ["rag-retrieval-pipeline"],
+    },
+    {
+        "id": "sh-03",
+        "type": "single-hop",
+        "query": "cross-encoder 是什么",
+        "expected_notes": ["cross-encoder"],
+    },
+    {
+        "id": "sh-04",
+        "type": "single-hop",
+        "query": "vaultrag 的 fail-open 是什么意思",
+        "expected_notes": [
+            "rag-retrieval-pipeline",
+            "hermes-vaultrag-interview",
+            "vaultrag-positioning-and-evolution",
+        ],
+    },
+    {
+        "id": "sh-05",
+        "type": "single-hop",
+        "query": "Hermes 消息规范化做了什么",
+        "expected_notes": ["hermes-message-normalization"],
+    },
+    {
+        "id": "sh-06",
+        "type": "single-hop",
+        "query": "DB2 获取执行计划有哪三种方式",
+        "expected_notes": ["db2-execution-plan-slow-sql-optimization"],
+    },
+    {
+        "id": "sh-07",
+        "type": "single-hop",
+        "query": "查询改写有哪三种策略",
+        "expected_notes": ["query-rewriting"],
+    },
+    {
+        "id": "sh-08",
+        "type": "single-hop",
+        "query": "Causal Coupling guard 解决的是什么问题",
+        "expected_notes": [
+            "context-summarizer",
+            "hermes-arch-quickpass-day1-2",
+            "hermes-vaultrag-interview",
+        ],
+    },
+    {
+        "id": "sh-09",
+        "type": "single-hop",
+        "query": "in_place 压缩和 rotation 压缩的区别",
+        "expected_notes": ["hermes-compression-per-turn-state-reset"],
+    },
+    # ---------- 无关：负样本 ----------
+    {
+        "id": "ng-01",
+        "type": "negative",
+        "query": "帮我写一个 Java 程序打印 hello world",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-02",
+        "type": "negative",
+        "query": "推荐上海三甲医院附近的川菜馆",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-03",
+        "type": "negative",
+        "query": "比特币今天价格是多少",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-04",
+        "type": "negative",
+        "query": "NBA 湖人队 2026 赛季夺冠赔率",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-05",
+        "type": "negative",
+        "query": "手冲咖啡的水粉比应该怎么控制",
+        "expected_notes": [],
+    },
+    # ---------- 术语缩写：BM25 强项（精确匹配） ----------
+    {
+        "id": "ab-01",
+        "type": "abbreviation",
+        "query": "MoA 是什么",
+        "expected_notes": ["moa-mixture-of-agents"],
+    },
+    {
+        "id": "ab-02",
+        "type": "abbreviation",
+        "query": "RRF 融合怎么做的",
+        "expected_notes": ["rag-retrieval-pipeline", "2026-08-02"],
+    },
+    {
+        "id": "ab-03",
+        "type": "abbreviation",
+        "query": "CRAG 三档评估是什么",
+        "expected_notes": ["rag-retrieval-pipeline", "vaultrag-positioning-and-evolution"],
+    },
+    {
+        "id": "ab-04",
+        "type": "abbreviation",
+        "query": "HyDE 是什么",
+        "expected_notes": ["query-rewriting"],
+    },
+    {
+        "id": "ab-05",
+        "type": "abbreviation",
+        "query": "BM25 的原理",
+        "expected_notes": ["rag-retrieval-pipeline", "2026-08-02"],
+    },
+    # ---------- 概念关联：双链扩展潜在场景 ----------
+    {
+        "id": "link-01",
+        "type": "concept-link",
+        "query": "prompt cache 和消息规范化有什么关系",
+        "expected_notes": ["prompt-cache-prefix-stability", "hermes-message-normalization"],
+    },
+    {
+        "id": "link-02",
+        "type": "concept-link",
+        "query": "上下文压缩和消息角色交替有什么联系",
+        "expected_notes": ["context-summarizer", "message-role"],
+    },
+    {
+        "id": "link-03",
+        "type": "concept-link",
+        "query": "fallback 和重试的区别是什么",
+        "expected_notes": ["fallback"],
+    },
+    # ---------- 无关：负样本扩充 ----------
+    {
+        "id": "ng-06",
+        "type": "negative",
+        "query": "如何用 Python 爬取微博热搜",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-07",
+        "type": "negative",
+        "query": "杭州哪家医院看骨科比较好",
+        "expected_notes": [],
+    },
+    {
+        "id": "ng-08",
+        "type": "negative",
+        "query": "推荐几部 2026 年值得看的科幻电影",
+        "expected_notes": [],
+    },
+]
+
+
+def get_queries(query_type: str = None):
+    """按类型过滤查询集；query_type=None 返回全部。"""
+    if query_type is None:
+        return QUERIES
+    return [q for q in QUERIES if q["type"] == query_type]
