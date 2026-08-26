@@ -1,0 +1,7 @@
+name: knowledge-search
+version: 1.0.0
+description: "rag_search tool — semantic retrieval over a local knowledge base (notes/docs vault). Returns relevant note snippets with sources. Vault path from context.vaultrag.vault_path or OBSIDIAN_VAULT_PATH."
+author: cmy
+kind: backend
+provides_tools:
+  - rag_search
