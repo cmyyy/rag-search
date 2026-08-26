@@ -1,3 +1,7 @@
 # vaultrag/ 引擎的历史保留在本地嵌套 .git（vaultrag/.git），
 # 内容本身由本仓库跟踪（推远程完整可用）；嵌套 .git 不推送。
 vaultrag/.git/
+
+# Python cache
+__pycache__/
+*.pyc
