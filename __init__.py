@@ -17,6 +17,7 @@ OBSIDIAN_VAULT_PATH 环境变量配置；未配置时 check_fn 返回 False，�
 from typing import Any, Mapping
 
 from .tools import RAG_SEARCH_SCHEMA, _check_rag_available, _rag_search
+from .vaultrag import _cmd_llm_wiki_init
 
 __all__ = ["register"]
 
@@ -52,7 +53,7 @@ def _kb_hint(_session_info: Mapping[str, Any] | None = None) -> str:
 
 
 def register(ctx) -> None:
-    """注册 rag_search 工具 + 知识库提示（插件加载器调用一次）。"""
+    """注册 rag_search 工具 + 知识库索引命令 + system prompt 提示。"""
     for name, schema, handler, check_fn, emoji, description in _TOOLS:
         ctx.register_tool(
             name=name,
@@ -63,6 +64,12 @@ def register(ctx) -> None:
             description=description,
             emoji=emoji,
         )
+    ctx.register_command(
+        "llm-wiki-init",
+        _cmd_llm_wiki_init,
+        description="初始化知识库索引（扫描 vault + 建索引 + 写入 context 配置）",
+        args_hint="<vault路径>",
+    )
     ctx.register_system_prompt_section(
         id="knowledge_kb_hint",
         content=_kb_hint,

@@ -1,0 +1,3 @@
+# vaultrag/ 是独立 git 仓库（引擎历史：guard 演进 + evals 评测体系），
+# 自持 .git 管理自身，不由本仓库跟踪。
+vaultrag/

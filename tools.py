@@ -22,7 +22,7 @@ def _get_engine():
     """懒加载单例引擎（延迟导入：插件加载期引擎可能未就绪，首次调用时才解析）。"""
     global _engine
     if _engine is None:
-        from plugins.context_engine.vaultrag import VaultRAGEngine
+        from .vaultrag import VaultRAGEngine
 
         _engine = VaultRAGEngine()
     return _engine
@@ -73,7 +73,7 @@ def _rag_search(args: dict, **kwargs) -> str:
         top_k = 4
 
     # 引擎常量延迟导入（复用引擎的检索参数，单一来源）
-    from plugins.context_engine.vaultrag import (
+    from .vaultrag import (
         _HYBRID_RECALL,
         _MAX_CHARS_PER_HIT,
         _MIN_QUERY_CHARS,
