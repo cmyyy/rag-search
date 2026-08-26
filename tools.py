@@ -88,8 +88,8 @@ def _rag_search(args: dict, **kwargs) -> str:
     if not engine._index_ready:
         return "[rag] 知识库索引未就绪——请先初始化知识库索引"
 
-    # 2. 缩写展开 + 长度门槛（与 select_context 一致）
-    q = engine._expand_abbrev((query or "").strip())
+    # 2. 查询清洗 + 长度门槛（与引擎 select_context 一致）
+    q = (query or "").strip()
     if not q:
         return "[rag] 查询为空"
     if len(q) < _MIN_QUERY_CHARS:
