@@ -1,7 +1,3 @@
-# vaultrag/ 是独立 git 仓库（引擎历史：guard 演进 + evals 评测体系），
-# 自持 .git 管理自身，不由本仓库跟踪。
-vaultrag/
-
-# Python cache
-__pycache__/
-*.pyc
+# vaultrag/ 引擎的历史保留在本地嵌套 .git（vaultrag/.git），
+# 内容本身由本仓库跟踪（推远程完整可用）；嵌套 .git 不推送。
+vaultrag/.git/
