@@ -63,7 +63,7 @@ context:
 
 - **混合检索**：BM25 字面 + bge-m3 向量 → RRF 融合
 - **CRAG guard 三档**：rerank top1 分数 + margin 判 Correct / Ambiguous / Incorrect，低置信不注入（宁可无结果，不错注入）
-- **查询增强**：缩写展开（如 llm-wiki → local llm wiki）+ query2doc 扩展
+- **查询增强**：缩写展开（查询含 MCP/TTS/LLM/RAG 等缩写时追加全称再检索，词表来自评测失败案例）+ query2doc 扩展
 - **多概念降级**：含比较/分隔符的查询放宽 guard 阈值
 - **fail-safe**：索引未就绪 / embedding 失败 / guard 不过，均有明确提示返回，不抛错
 - **可配置通用**：不绑定任何特定知识库，配好 vault 路径即用
