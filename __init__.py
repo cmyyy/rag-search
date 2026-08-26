@@ -1,4 +1,4 @@
-"""knowledge-search 插件 — rag_search 工具（仿 spotify 插件结构，2026-08-25）。
+"""rag-search 插件 — rag_search 工具（仿 spotify 插件结构，2026-08-25）。
 
 - tools.py：schema + handler + check_fn（检索实现，复用 vaultrag 引擎）
 - __init__.py：_TOOLS 元组 + register(ctx) 注册循环 + 索引命令
@@ -39,7 +39,7 @@ def register(ctx) -> None:
     for name, schema, handler, check_fn, emoji, description in _TOOLS:
         ctx.register_tool(
             name=name,
-            toolset="knowledge",
+            toolset="rag",
             schema=schema,
             handler=handler,
             check_fn=check_fn,
