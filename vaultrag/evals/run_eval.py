@@ -1,7 +1,7 @@
 """vaultrag 横向/纵向评测脚本（2026-08-22）。
 
 用法（Windows，在 hermes-agent 根目录）：
-    .venv/Scripts/python.exe plugins/context_engine/vaultrag/evals/run_eval.py
+    .venv/Scripts/python.exe plugins/rag-search/vaultrag/evals/run_eval.py
 
 对比变体（同场景、同查询集）：
   A. 纯向量检索     —— bge-m3 云端向量直接 top-16，无 BM25/无 rerank
@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-# 让包可导入：脚本放在 plugins/context_engine/vaultrag/evals/ 下，
+# 让包可导入：脚本放在 plugins/rag-search/vaultrag/evals/ 下，
 # 向上 5 层是 hermes-agent 根（与 verify_*.py 的约定一致）
 _HERMES_ROOT = Path(__file__).resolve().parent
 for _ in range(8):
@@ -439,7 +439,7 @@ def write_report(
             "> 报告结构与评估口径已就绪，在可联网环境重跑下方命令即自动填数：\n\n"
             "> ```\n"
             "> cd D:/AI/hermes-agent && .venv/Scripts/python.exe "
-            "plugins/context_engine/vaultrag/evals/run_eval.py\n"
+            "plugins/rag-search/vaultrag/evals/run_eval.py\n"
             "> ```\n\n"
             "待补数据将回答：面包屑是否提升单跳命中、图扩展是否提升多跳 hit@1、"
             "guard 是否仍拦截负样本、verdict 迁移方向（Incorrect/Ambiguous→Correct）。\n"

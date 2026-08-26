@@ -1,7 +1,7 @@
 """verify_pipeline.py —— vaultrag 检索管线验证（固化版，2026-08-16）。
 
 跑法（在 hermes-agent 目录下）：
-    .venv/Scripts/python.exe plugins/context_engine/vaultrag/verify_pipeline.py
+    .venv/Scripts/python.exe plugins/rag-search/vaultrag/verify_pipeline.py
 
 自动读取 .env 里的 EMBEDDING_API_KEY / OBSIDIAN_VAULT_PATH（load_dotenv），
 不需要手动传环境变量。覆盖：

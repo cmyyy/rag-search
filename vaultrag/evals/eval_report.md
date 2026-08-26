@@ -1,96 +1,247 @@
-# vaultrag 评测报告（100 条查询集，最终版）
+# vaultrag 评测报告（双链图扩展 + 面包屑切块）
 
-- 生成时间：2026-08-22
-- vault：`D:\llmwiki\llm-wiki`（index/log/SCHEMA 已排除）
-- 查询集：100 条（single-hop 35 / multi-hop 20 / abbreviation 15 / concept-link 15 / negative 15）
-  - 4 子 agent 并行读 vault 真实笔记构造（Hermes 源码 / concepts / interview / 负样本）
-  - expected_notes 全部校验存在、id 唯一、无重复查询
-- 云端 API：真实评测（bge-m3 embedding + bge-reranker-v2-m3，SiliconFlow）
+- 生成时间：2026-08-27T00:42:57+08:00
+- vault：`D:\llmwiki\llm-wiki`（57 篇笔记 / 709 块，v2 切块）
+- 查询集：100 条（多跳 34 / 单跳 36 / 无关 15）
+- 云端 API：可用——以下为真实评测数据
 
-## 一、生产路径决策（评测驱动）
+## 一、横向对比（同查询集，按变体分组）
 
-```
-✅ 用：面包屑 + frontmatter（+4.7pp Hit@1）
-✅ 用：混合检索 RRF 排序（BM25 + 向量，无 rerank）
-✅ 用：阈值 guard 拦截无关（负样本 15/15）+ 过滤 index 页
-✅ 用：旧分块（标题感知切块）——分块优化是 trade-off，生产选 Hit@1 更优
-❌ 不用：cross-encoder rerank（-24pp，稳定负优化）
-❌ 不用：双链图扩展（评测无增益，TODO #25）
-```
+| id | type | 查询 | 期望命中 | pure_vector | pure_bm25 | hybrid_no_rerank | hybrid_rerank | graph | langchain |
+|---|---|---|---|---|---|---|---|---|---|
+| sh-01 | single-hop | MoA 是什么 | moa-mixture-of-agents | moa-mixture-of-agents✓ 0.624 | moa-mixture-of-agents✓ 13.899 | hermes-moa-context-injection✗ 0.230 | hermes-request-assembly-extras✗ 0.742 ambiguous | hermes-request-assembly-extras✗ 0.738 ambiguous | moa-mixture-of-agents✓ 0.624 correct |
+| sh-02 | single-hop | RRF 融合原理 | rag-retrieval-pipeline | rag-retrieval-pipeline✓ 0.634 | rag-retrieval-pipeline✓ 17.469 | rag-retrieval-pipeline✓ 0.328 | cross-encoder✗ 0.478 correct | cross-encoder✗ 0.483 correct | rag-retrieval-pipeline✓ 0.634 correct |
+| sh-03 | single-hop | cross-encoder 是什么 | cross-encoder | cross-encoder✓ 0.649 | cross-encoder✓ 25.672 | cross-encoder✓ 0.221 | cross-encoder✓ 0.968 correct | cross-encoder✓ 0.968 correct | cross-encoder✓ 0.649 correct |
+| sh-04 | multi-hop | vaultrag 的 fail-open 是什么意思 | rag-retrieval-pipeline、hermes-vaultrag-interview、vaultrag-positioning-and-evolution | vaultrag-positioning-and-evolution✓ 0.535 | vaultrag-positioning-and-evolution✓ 16.051 | vaultrag-positioning-and-evolution✓ 0.187 | rag-retrieval-pipeline✓ 0.432 correct | rag-retrieval-pipeline✓ 0.431 correct | vaultrag-positioning-and-evolution✓ 0.535 correct |
+| sh-05 | single-hop | Hermes 消息规范化做了什么 | hermes-message-normalization | hermes-message-normalization✓ 0.763 | hermes-message-normalization✓ 23.269 | hermes-message-normalization✓ 0.178 | hermes-message-normalization✓ 0.917 correct | hermes-message-normalization✓ 0.917 correct | hermes-message-normalization✓ 0.763 correct |
+| sh-06 | single-hop | DB2 获取执行计划有哪三种方式 | db2-execution-plan-slow-sql-optimization | hermes-arch-quickpass-day1-2✗ 0.536 | hermes-arch-quickpass-day1-2✗ 20.198 | hermes-arch-quickpass-day1-2✗ 0.462 | hermes-interim-text-dedup✗ 0.007 incorrect | hermes-interim-text-dedup✗ 0.007 incorrect | hermes-arch-quickpass-day1-2✗ 0.536 correct |
+| sh-07 | single-hop | 查询改写有哪三种策略 | query-rewriting | query-rewriting✓ 0.799 | query-rewriting✓ 38.863 | query-rewriting✓ 0.244 | query-rewriting✓ 0.436 correct | query-rewriting✓ 0.439 correct | query-rewriting✓ 0.799 correct |
+| sh-08 | multi-hop | Causal Coupling guard 解决的是什么问题 | context-summarizer、hermes-arch-quickpass-day1-2 | hermes-vaultrag-interview✗ 0.505 | hermes-agent-init-refactoring✗ 22.008 | rag-retrieval-pipeline✗ 0.236 | hermes-arch-quickpass-day1-2✓ 0.427 correct | hermes-arch-quickpass-day1-2✓ 0.427 correct | hermes-vaultrag-interview✗ 0.505 correct |
+| sh-09 | single-hop | in_place 压缩和 rotation 压缩的区别 | hermes-compression-per-turn-state-reset | hermes-compression-per-turn-state-reset✓ 0.663 | hermes-compression-per-turn-state-reset✓ 26.868 | context-summarizer✗ 0.165 | hermes-loop-entry-phase✗ 0.957 correct | hermes-loop-entry-phase✗ 0.958 correct | hermes-compression-per-turn-state-reset✓ 0.663 correct |
+| sh-10 | single-hop | Hermes 每回合开头为什么要清空压缩状态？gateway 跨回合复用 | hermes-compression-per-turn-state-reset | hermes-compression-per-turn-state-reset✓ 0.789 | hermes-compression-per-turn-state-reset✓ 57.834 | hermes-loop-entry-phase✗ 0.156 | hermes-conversation-loop-run-conversation✗ 0.769 ambiguous | hermes-conversation-loop-run-conversation✗ 0.763 ambiguous | hermes-compression-per-turn-state-reset✓ 0.789 correct |
+| sh-11 | single-hop | MoA 回合发聚合请求前，参考模型们的回答是怎么汇总并塞进请求里的？ | hermes-moa-context-injection | hermes-moa-context-injection✓ 0.814 | hermes-moa-context-injection✓ 59.946 | hermes-moa-context-injection✓ 0.248 | hermes-loop-entry-phase✗ 0.608 correct | hermes-loop-entry-phase✗ 0.608 correct | hermes-moa-context-injection✓ 0.814 correct |
+| sh-12 | single-hop | 模型看到的工具菜单不是全量发的，工具 schema 从注册到变成 too | hermes-tool-schema-registry | hermes-tool-schema-registry✓ 0.797 | hermes-tool-schema-registry✓ 80.406 | hermes-tool-schema-registry✓ 0.308 | hermes-tool-schema-registry✓ 0.214 incorrect | hermes-tool-schema-registry✓ 0.214 incorrect | hermes-tool-schema-registry✓ 0.797 correct |
+| sh-13 | single-hop | 为什么要把工具调用的 arguments 重新序列化成键排序、紧凑的 J | hermes-message-normalization | hermes-message-normalization✓ 0.686 | hermes-message-normalization✓ 35.672 | hermes-message-normalization✓ 0.181 | hermes-run-conversation-interview✗ 0.719 correct | hermes-run-conversation-interview✗ 0.716 correct | hermes-message-normalization✓ 0.686 correct |
+| sh-14 | single-hop | /steer 和 interrupt 到底有什么区别？为什么 steer | hermes-steer-mechanism | hermes-steer-mechanism✓ 0.803 | hermes-steer-mechanism✓ 72.966 | hermes-steer-mechanism✓ 0.194 | hermes-steer-mechanism✓ 0.270 incorrect | hermes-steer-mechanism✓ 0.270 incorrect | hermes-steer-mechanism✓ 0.803 correct |
+| sh-15 | single-hop | 认证池 credential pool 是干嘛的？同一 provider | hermes-credential-pool-turn-reset | hermes-credential-pool-turn-reset✓ 0.782 | hermes-credential-pool-turn-reset✓ 60.294 | hermes-credential-pool-turn-reset✓ 0.177 | hermes-error-recovery-phase✗ 0.170 incorrect | hermes-error-recovery-phase✗ 0.170 incorrect | hermes-credential-pool-turn-reset✓ 0.782 correct |
+| sh-16 | single-hop | prefill messages 是干什么用的？插在消息的什么位置，会不 | hermes-prefill-messages | hermes-prefill-messages✓ 0.723 | hermes-api-messages-build✗ 20.924 | hermes-prefill-messages✓ 0.191 | hermes-prefill-messages✓ 0.201 incorrect | hermes-prefill-messages✓ 0.204 incorrect | hermes-prefill-messages✓ 0.723 correct |
+| sh-17 | single-hop | 同一个过程旁白为什么会在一个回合里被重复推送？_delivered_in | hermes-interim-text-dedup | hermes-interim-text-dedup✓ 0.805 | hermes-interim-text-dedup✓ 82.884 | hermes-interim-text-dedup✓ 0.212 | hermes-interim-text-dedup✓ 0.828 correct | hermes-interim-text-dedup✓ 0.828 correct | hermes-interim-text-dedup✓ 0.805 correct |
+| sh-18 | single-hop | RAG 里的 rerank 到底是个什么东西？它跟拿来算向量相似度的 e | cross-encoder | cross-encoder✓ 0.736 | rag-retrieval-pipeline✗ 40.279 | rag-retrieval-pipeline✗ 0.303 | hermes-vaultrag-interview✗ 0.473 ambiguous | hermes-vaultrag-interview✗ 0.473 ambiguous | cross-encoder✓ 0.736 correct |
+| sh-19 | single-hop | 主模型一直 429 限流，Hermes 会自动换一个备用 provide | fallback | fallback✓ 0.799 | fallback✓ 55.573 | fallback✓ 0.215 | fallback✓ 0.788 ambiguous | fallback✓ 0.788 ambiguous | fallback✓ 0.799 correct |
+| sh-20 | single-hop | DB2 有个 SQL 特别慢，我怎么拿到它的执行计划看看优化器到底走了什 | db2-execution-plan-slow-sql-optimization | hermes-arch-quickpass-day1-2✗ 0.568 | hermes-request-execution-phase✗ 15.236 | hermes-arch-quickpass-day1-2✗ 0.256 | hermes-llm-call-chain✗ 0.009 incorrect | hermes-llm-call-chain✗ 0.009 incorrect | hermes-arch-quickpass-day1-2✗ 0.568 correct |
+| sh-21 | single-hop | OpenAI 兼容接口的 messages 里 role 都有哪些？为什 | message-role | message-role✓ 0.750 | message-role✓ 32.459 | message-role✓ 0.186 | hermes-run-conversation-interview✗ 0.508 correct | hermes-run-conversation-interview✗ 0.508 correct | message-role✓ 0.750 correct |
+| sh-22 | single-hop | 模型输出里出现 这种标签是怎么回事？Hermes 为什么要把它从正文里剥 | think-block | hermes-tool-schema-registry✗ 0.641 | think-block✓ 35.861 | think-block✓ 0.104 | hermes-interrupt-partial-response-save✗ 0.543 correct | hermes-interrupt-partial-response-save✗ 0.536 correct | hermes-tool-schema-registry✗ 0.641 correct |
+| sh-23 | single-hop | .gitignore 里写了 build/，结果把子目录 harness | gitignore-anchor-and-check-ignore | gitignore-anchor-and-check-ignore✓ 0.793 | gitignore-anchor-and-check-ignore✓ 68.571 | gitignore-anchor-and-check-ignore✓ 0.193 | gitignore-anchor-and-check-ignore✓ 0.024 incorrect | gitignore-anchor-and-check-ignore✓ 0.025 incorrect | gitignore-anchor-and-check-ignore✓ 0.793 correct |
+| sh-24 | single-hop | Python 的协程和线程到底差在哪？为什么说协程切换成本低、并发上限高 | python-asyncio-coroutine-streaming | python-asyncio-coroutine-streaming✓ 0.819 | python-asyncio-coroutine-streaming✓ 67.788 | python-asyncio-coroutine-streaming✓ 0.266 | python-asyncio-coroutine-streaming✓ 0.076 incorrect | python-asyncio-coroutine-streaming✓ 0.076 incorrect | python-asyncio-coroutine-streaming✓ 0.819 correct |
+| sh-25 | single-hop | Java 线程安全的集合应该怎么选？ConcurrentHashMap  | DeepSeek - Java线程安全集合详解 | hermes-agent-init-structure✗ 0.493 | hermes-credential-pool-turn-reset✗ 17.663 | hermes-live-set-active-messages✗ 0.113 | hermes-request-execution-phase✗ 0.001 incorrect | hermes-request-execution-phase✗ 0.001 incorrect | hermes-agent-init-structure✗ 0.493 ambiguous |
+| sh-33 | single-hop | Hermes 里一次工具调用的消息结构是什么样的？tool_calls  | hermes-tool-call-message-structure | hermes-tool-call-message-structure✓ 0.779 | hermes-tool-call-message-structure✓ 51.580 | hermes-tool-call-message-structure✓ 0.164 | message-role✗ 0.864 ambiguous | message-role✗ 0.863 ambiguous | hermes-tool-call-message-structure✓ 0.779 correct |
+| sh-35 | single-hop | prompt cache 的前缀稳定性为什么重要？Hermes 注入上下 | prompt-cache-prefix-stability | prompt-cache-prefix-stability✓ 0.802 | prompt-cache-prefix-stability✓ 52.675 | prompt-cache-prefix-stability✓ 0.220 | prompt-cache-prefix-stability✓ 0.906 ambiguous | prompt-cache-prefix-stability✓ 0.906 ambiguous | prompt-cache-prefix-stability✓ 0.802 correct |
+| mh-02 | multi-hop | Hermes 压缩和 prompt cache 前缀稳定性是什么关系 | prompt-cache-prefix-stability、context-summarizer、hermes-compression-per-turn-state-reset | prompt-cache-prefix-stability✓ 0.746 | prompt-cache-prefix-stability✓ 34.339 | prompt-cache-prefix-stability✓ 0.220 | prompt-cache-prefix-stability✓ 0.970 ambiguous | prompt-cache-prefix-stability✓ 0.970 ambiguous | prompt-cache-prefix-stability✓ 0.747 correct |
+| mh-03 | multi-hop | MoA 聚合上下文注入在 Hermes 里是怎么实现的 | moa-mixture-of-agents、hermes-moa-context-injection、hermes-conversation-loop-run-conversation | hermes-request-assembly-extras✗ 0.758 | hermes-moa-context-injection✓ 42.154 | hermes-moa-context-injection✓ 0.264 | hermes-moa-context-injection✓ 0.977 correct | hermes-moa-context-injection✓ 0.977 correct | hermes-request-assembly-extras✗ 0.758 correct |
+| mh-04 | multi-hop | RRF 为什么比直接加权融合好，vaultrag 里是怎么用的 | rag-retrieval-pipeline、hermes-vaultrag-interview、vaultrag-positioning-and-evolution | rag-retrieval-pipeline✓ 0.639 | rag-retrieval-pipeline✓ 33.432 | rag-retrieval-pipeline✓ 0.278 | vaultrag-positioning-and-evolution✓ 0.405 ambiguous | vaultrag-positioning-and-evolution✓ 0.405 ambiguous | rag-retrieval-pipeline✓ 0.639 correct |
+| mh-05 | multi-hop | cross-encoder 为什么比 bi-encoder 准，RAG  | cross-encoder、rag-retrieval-pipeline | cross-encoder✓ 0.705 | cross-encoder✓ 57.874 | rag-retrieval-pipeline✓ 0.237 | cross-encoder✓ 0.367 ambiguous | cross-encoder✓ 0.368 ambiguous | cross-encoder✓ 0.705 correct |
+| mh-06 | multi-hop | context engine 和压缩机制有什么区别，vaultrag 属 | hermes-context-engine-selection、context-summarizer、vaultrag-positioning-and-evolution | context-summarizer✓ 0.646 | context-summarizer✓ 26.775 | context-summarizer✓ 0.203 | hermes-request-assembly-extras✗ 0.238 incorrect | hermes-request-assembly-extras✗ 0.243 incorrect | context-summarizer✓ 0.646 correct |
+| mh-07 | multi-hop | 查询改写有哪几种策略，vaultrag 为什么当前没做 | query-rewriting、vaultrag-positioning-and-evolution、hermes-vaultrag-interview | query-rewriting✓ 0.751 | query-rewriting✓ 30.543 | query-rewriting✓ 0.240 | query-rewriting✓ 0.292 incorrect | query-rewriting✓ 0.293 incorrect | query-rewriting✓ 0.751 correct |
+| mh-08 | multi-hop | Hermes 压缩 in_place 模式为什么需要 _last_com | hermes-compression-per-turn-state-reset、context-summarizer | hermes-compression-per-turn-state-reset✓ 0.690 | hermes-live-set-active-messages✗ 41.327 | hermes-compression-per-turn-state-reset✓ 0.145 | hermes-loop-entry-phase✗ 0.842 correct | hermes-loop-entry-phase✗ 0.842 correct | hermes-compression-per-turn-state-reset✓ 0.690 correct |
+| mh-09 | single-hop | TCC、Seata AT 和 Saga 三种分布式事务模式怎么选 | distributed-transactions-tcc-seata-saga | hermes-tool-schema-registry✗ 0.437 | hermes-live-set-active-messages✗ 11.088 | hermes-agent-init-refactoring✗ 0.147 | hermes-live-set-active-messages✗ 0.001 incorrect | hermes-live-set-active-messages✗ 0.001 incorrect | hermes-tool-schema-registry✗ 0.437 ambiguous |
+| mh-10 | multi-hop | prompt cache 前缀稳定性给 Hermes 注入类机制带来什么 | prompt-cache-prefix-stability、hermes-context-engine-selection、vaultrag-positioning-and-evolution | prompt-cache-prefix-stability✓ 0.783 | prompt-cache-prefix-stability✓ 39.621 | prompt-cache-prefix-stability✓ 0.221 | prompt-cache-prefix-stability✓ 0.958 ambiguous | prompt-cache-prefix-stability✓ 0.958 ambiguous | prompt-cache-prefix-stability✓ 0.783 correct |
+| mh-11 | multi-hop | Hermes 为了保住 prompt cache 前缀稳定做了哪些事？消 | hermes-message-normalization、hermes-api-messages-build、hermes-anthropic-cache-control | prompt-cache-prefix-stability✗ 0.792 | hermes-anthropic-cache-control✓ 59.976 | prompt-cache-prefix-stability✗ 0.197 | hermes-conversation-loop-run-conversation✗ 0.959 ambiguous | hermes-conversation-loop-run-conversation✗ 0.958 ambiguous | prompt-cache-prefix-stability✗ 0.792 correct |
+| mh-12 | multi-hop | run_conversation 这个几千行的函数整体分哪几个阶段？请求 | hermes-conversation-loop-run-conversation、hermes-request-assembly-extras | hermes-conversation-loop-run-conversation✓ 0.716 | hermes-request-assembly-extras✓ 44.098 | hermes-conversation-loop-run-conversation✓ 0.200 | hermes-request-assembly-extras✓ 0.882 ambiguous | hermes-request-assembly-extras✓ 0.882 ambiguous | hermes-conversation-loop-run-conversation✓ 0.716 correct |
+| mh-13 | multi-hop | 上下文压缩的 rotation 模式为什么被 in-place 取代？压 | hermes-compression-per-turn-state-reset、hermes-pre-api-pressure-check | hermes-compression-per-turn-state-reset✓ 0.694 | hermes-compression-per-turn-state-reset✓ 51.297 | hermes-compression-implementation✗ 0.168 | hermes-loop-entry-phase✗ 0.792 ambiguous | hermes-loop-entry-phase✗ 0.790 ambiguous | hermes-compression-per-turn-state-reset✓ 0.694 correct |
+| mh-14 | multi-hop | 发请求前的消息消毒会修哪两类脏数据？什么样的工具调用消息结构才算合法？ | hermes-message-sanitize、hermes-tool-call-message-structure | hermes-message-sanitize✓ 0.761 | hermes-message-sanitize✓ 65.291 | hermes-message-sanitize✓ 0.166 | hermes-message-sanitize✓ 0.935 correct | hermes-message-sanitize✓ 0.936 correct | hermes-message-sanitize✓ 0.761 correct |
+| mh-15 | multi-hop | 响应处理阶段 D 和错误恢复阶段 E 是什么关系？一个看响应内容一个看异 | hermes-response-handling-phase、hermes-error-recovery-phase | hermes-error-recovery-phase✓ 0.670 | hermes-error-recovery-phase✓ 75.098 | hermes-error-recovery-phase✓ 0.283 | hermes-response-handling-phase✓ 0.344 ambiguous | hermes-response-handling-phase✓ 0.341 ambiguous | hermes-error-recovery-phase✓ 0.670 correct |
+| mh-16 | multi-hop | 请求执行阶段的中层 retry 循环一直延伸到哪？模型说要调工具之后，响 | hermes-request-execution-phase、hermes-tool-execution-finalize-phase | hermes-request-execution-phase✓ 0.677 | hermes-request-execution-phase✓ 59.056 | hermes-tool-execution-finalize-phase✓ 0.284 | hermes-run-conversation-interview✗ 0.388 ambiguous | hermes-run-conversation-interview✗ 0.389 ambiguous | hermes-request-execution-phase✓ 0.677 correct |
+| mh-17 | multi-hop | gateway 的钩子插件靠什么信号感知 agent 每步进度？step | hermes-step-callback-explained、hermes-skill-nudge | hermes-loop-entry-phase✗ 0.764 | hermes-loop-entry-phase✗ 46.199 | hermes-step-callback-explained✓ 0.315 | hermes-live-set-active-messages✗ 0.920 correct | hermes-live-set-active-messages✗ 0.918 correct | hermes-loop-entry-phase✗ 0.764 correct |
+| mh-18 | multi-hop | Hermes 的插件钩子能在发请求前改写发给 provider 的参数吗 | hook-function、kwargs | hermes-request-execution-phase✗ 0.796 | hermes-request-execution-phase✗ 42.323 | hermes-provider-profile-design✗ 0.242 | hermes-request-assembly-extras✗ 0.714 ambiguous | hermes-request-assembly-extras✗ 0.710 ambiguous | hermes-request-execution-phase✗ 0.796 correct |
+| mh-19 | multi-hop | vaultrag 检索时先混合检索再 rerank，这两步分别用的什么模 | rag-retrieval-pipeline、cross-encoder | cross-encoder✓ 0.744 | rag-retrieval-pipeline✓ 54.188 | rag-retrieval-pipeline✓ 0.300 | cross-encoder✓ 0.903 correct | cross-encoder✓ 0.901 correct | cross-encoder✓ 0.744 correct |
+| mh-20 | multi-hop | 上下文超窗被压缩后，模型下一次加载会话看到的 live 集变成什么样了？ | context-summarizer、hermes-live-set-active-messages | context-summarizer✓ 0.667 | context-summarizer✓ 48.987 | context-summarizer✓ 0.209 | hermes-live-set-active-messages✓ 0.087 incorrect | hermes-live-set-active-messages✓ 0.087 incorrect | context-summarizer✓ 0.666 correct |
+| ab-02 | abbreviation | CRAG 三档评估是什么 | rag-retrieval-pipeline | rag-retrieval-pipeline✓ 0.682 | rag-retrieval-pipeline✓ 39.411 | rag-retrieval-pipeline✓ 0.176 | vaultrag-positioning-and-evolution✗ 0.125 incorrect | vaultrag-positioning-and-evolution✗ 0.128 incorrect | rag-retrieval-pipeline✓ 0.682 correct |
+| ab-03 | abbreviation | HyDE 是什么 | query-rewriting | hermes-provider-profile-design✗ 0.374 | query-rewriting✓ 14.903 | hermes-provider-profile-design✗ 0.110 | query-rewriting✓ 0.061 incorrect | query-rewriting✓ 0.061 incorrect | hermes-provider-profile-design✗ 0.374 ambiguous |
+| ab-05 | abbreviation | MoA 是什么？它和 MoE 有什么区别？ | moa-mixture-of-agents、hermes-loop-entry-phase | moa-mixture-of-agents✓ 0.629 | moa-mixture-of-agents✓ 23.717 | hermes-moa-context-injection✗ 0.149 | hermes-vaultrag-interview✗ 0.298 incorrect | hermes-vaultrag-interview✗ 0.298 incorrect | moa-mixture-of-agents✓ 0.629 correct |
+| ab-06 | abbreviation | KV cache 前缀稳定是什么意思？为什么要保证发出去的消息字节完全一 | prompt-cache-prefix-stability、hermes-anthropic-cache-control | hermes-message-normalization✗ 0.690 | hermes-message-normalization✗ 56.467 | prompt-cache-prefix-stability✓ 0.210 | hermes-conversation-loop-run-conversation✗ 0.826 correct | hermes-conversation-loop-run-conversation✗ 0.824 correct | hermes-message-normalization✗ 0.690 correct |
+| ab-07 | abbreviation | cache_control 是什么？Anthropic 提示词缓存打标是 | hermes-anthropic-cache-control | hermes-anthropic-cache-control✓ 0.797 | hermes-anthropic-cache-control✓ 68.410 | hermes-anthropic-cache-control✓ 0.220 | hermes-anthropic-cache-control✓ 0.991 correct | hermes-anthropic-cache-control✓ 0.991 correct | hermes-anthropic-cache-control✓ 0.797 correct |
+| ab-08 | abbreviation | OAuth token 或 API key 被限流（429）时，认证池和 | hermes-credential-pool-turn-reset、hermes-error-recovery-phase | hermes-credential-pool-turn-reset✓ 0.718 | hermes-loop-entry-phase✗ 40.688 | hermes-error-recovery-phase✓ 0.281 | hermes-loop-entry-phase✗ 0.918 correct | hermes-loop-entry-phase✗ 0.919 correct | hermes-credential-pool-turn-reset✓ 0.718 correct |
+| ab-09 | abbreviation | TTS 管线靠什么提前开始合成音频？流式回调 stream_callba | hermes-loop-entry-phase | hermes-agent-init-structure✗ 0.605 | hermes-loop-entry-phase✓ 52.870 | hermes-step-callback-explained✗ 0.224 | hermes-loop-entry-phase✓ 0.980 correct | hermes-loop-entry-phase✓ 0.980 correct | hermes-agent-init-structure✗ 0.605 correct |
+| ab-10 | abbreviation | RRF 是什么？BM25 和向量检索两个结果集的排名是怎么融合成一份的？ | rag-retrieval-pipeline | rag-retrieval-pipeline✓ 0.756 | rag-retrieval-pipeline✓ 74.427 | rag-retrieval-pipeline✓ 0.330 | rag-retrieval-pipeline✓ 0.483 correct | rag-retrieval-pipeline✓ 0.483 correct | rag-retrieval-pipeline✓ 0.756 correct |
+| ab-11 | abbreviation | MoA 和 MoE 到底有什么区别？总感觉两个都是多模型，面试千万别搞混 | moa-mixture-of-agents | moa-mixture-of-agents✓ 0.736 | moa-mixture-of-agents✓ 29.414 | hermes-moa-context-injection✗ 0.151 | hermes-loop-entry-phase✗ 0.973 correct | hermes-loop-entry-phase✗ 0.973 correct | moa-mixture-of-agents✓ 0.736 correct |
+| ab-12 | abbreviation | TCC 和 Saga 都是分布式事务方案，各自适合什么场景？哪个对业务代 | distributed-transactions-tcc-seata-saga | think-block✗ 0.447 | vaultrag-positioning-and-evolution✗ 18.708 | deepeval-vs-langfuse✗ 0.066 | fallback✗ 0.000 incorrect | fallback✗ 0.000 incorrect | think-block✗ 0.447 ambiguous |
+| ab-13 | abbreviation | AOP 里的 Pointcut、Advice、Weaving 分别是什么 | DeepSeek - Java AOP切面详解 | hook-function✗ 0.530 | hermes-compression-per-turn-state-reset✗ 29.334 | hermes-provider-profile-design✗ 0.140 | hook-function✗ 0.002 incorrect | hook-function✗ 0.002 incorrect | hook-function✗ 0.530 correct |
+| ab-14 | abbreviation | HyDE 是什么检索技巧？它怎么解决查询太模糊、检索不到东西的问题？ | query-rewriting | query-rewriting✓ 0.583 | query-rewriting✓ 47.606 | query-rewriting✓ 0.234 | query-rewriting✓ 0.229 incorrect | query-rewriting✓ 0.232 incorrect | query-rewriting✓ 0.583 correct |
+| cl-01 | multi-hop | prompt cache 和消息规范化有什么关系 | prompt-cache-prefix-stability、hermes-message-normalization | prompt-cache-prefix-stability✓ 0.631 | hermes-message-normalization✓ 30.151 | prompt-cache-prefix-stability✓ 0.202 | think-block✗ 0.585 ambiguous | think-block✗ 0.588 ambiguous | prompt-cache-prefix-stability✓ 0.630 correct |
+| cl-02 | multi-hop | 上下文压缩和消息角色交替有什么联系 | context-summarizer、message-role | context-summarizer✓ 0.641 | message-role✓ 29.804 | hermes-compression-implementation✗ 0.213 | hermes-run-conversation-interview✗ 0.169 incorrect | hermes-run-conversation-interview✗ 0.169 incorrect | context-summarizer✓ 0.641 correct |
+| cl-03 | single-hop | fallback 和重试的区别是什么 | fallback | fallback✓ 0.793 | fallback✓ 28.823 | fallback✓ 0.209 | hermes-request-execution-phase✗ 0.517 ambiguous | hermes-request-execution-phase✗ 0.517 ambiguous | fallback✓ 0.793 correct |
+| cl-04 | multi-hop | Hermes 说"不信任任何上游"，消息消毒和消息规范化是不是都是发请求 | hermes-message-sanitize、hermes-message-normalization | hermes-message-sanitize✓ 0.777 | hermes-message-sanitize✓ 64.931 | hermes-message-sanitize✓ 0.166 | message-role✗ 0.721 ambiguous | message-role✗ 0.721 ambiguous | hermes-message-sanitize✓ 0.777 correct |
+| cl-05 | multi-hop | Hermes 每回合开头要重置哪些 per-turn 状态？压缩标志、去 | hermes-compression-per-turn-state-reset、hermes-interim-text-dedup、hermes-loop-counter-init、hermes-credential-pool-turn-reset | hermes-compression-per-turn-state-reset✓ 0.777 | hermes-interim-text-dedup✓ 50.363 | hermes-loop-counter-init✓ 0.189 | hermes-conversation-loop-run-conversation✗ 0.938 correct | hermes-conversation-loop-run-conversation✗ 0.939 correct | hermes-compression-per-turn-state-reset✓ 0.777 correct |
+| cl-06 | multi-hop | MoA 聚合上下文和 prefill messages 都是往请求里塞东 | hermes-moa-context-injection、hermes-prefill-messages | hermes-moa-context-injection✓ 0.682 | hermes-moa-context-injection✓ 36.040 | hermes-moa-context-injection✓ 0.250 | hermes-api-messages-build✗ 0.669 ambiguous | hermes-api-messages-build✗ 0.668 ambiguous | hermes-moa-context-injection✓ 0.682 correct |
+| cl-07 | multi-hop | RAG 两阶段检索为什么是 bi-encoder 粗召回 + cross | cross-encoder、rag-retrieval-pipeline | rag-retrieval-pipeline✓ 0.782 | rag-retrieval-pipeline✓ 70.143 | rag-retrieval-pipeline✓ 0.303 | cross-encoder✓ 0.194 incorrect | cross-encoder✓ 0.196 incorrect | rag-retrieval-pipeline✓ 0.782 correct |
+| cl-08 | multi-hop | Hermes 发给 provider 的请求参数 api_kwargs  | kwargs、hook-function | hermes-request-execution-phase✗ 0.805 | kwargs✓ 34.810 | hermes-provider-profile-design✗ 0.225 | hermes-provider-profile-design✗ 0.922 correct | hermes-provider-profile-design✗ 0.924 correct | hermes-request-execution-phase✗ 0.805 correct |
+| cl-09 | multi-hop | 消息角色交替违规会导致 provider 静默返回空内容，这种空响应会不 | message-role、fallback | message-role✓ 0.730 | message-role✓ 63.719 | fallback✓ 0.173 | hermes-request-assembly-extras✗ 0.988 correct | hermes-request-assembly-extras✗ 0.988 correct | message-role✓ 0.730 correct |
+| cl-10 | multi-hop | MoA 的 base64 魔数前缀消息和上下文注入都会往消息里塞东西，H | moa-mixture-of-agents、prompt-cache-prefix-stability | hermes-request-assembly-extras✗ 0.698 | hermes-moa-context-injection✗ 34.989 | hermes-moa-context-injection✗ 0.132 | hermes-conversation-loop-run-conversation✗ 0.891 correct | hermes-conversation-loop-run-conversation✗ 0.891 correct | hermes-request-assembly-extras✗ 0.698 correct |
+| cl-11 | multi-hop | 查询改写会把一个问题拆成多个子查询，每个子查询都要重新走检索和 rera | query-rewriting、cross-encoder | query-rewriting✓ 0.773 | query-rewriting✓ 82.115 | rag-retrieval-pipeline✗ 0.269 | query-rewriting✓ 0.568 correct | query-rewriting✓ 0.565 correct | query-rewriting✓ 0.773 correct |
+| cl-12 | multi-hop | run_agent.py 里的转发器和 conversation_loo | hermes-run-conversation-forwarder、hermes-conversation-loop-run-conversation | hermes-run-conversation-forwarder✓ 0.759 | hermes-run-conversation-forwarder✓ 75.418 | hermes-run-conversation-forwarder✓ 0.243 | hermes-conversation-loop-run-conversation✓ 0.760 ambiguous | hermes-conversation-loop-run-conversation✓ 0.760 ambiguous | hermes-run-conversation-forwarder✓ 0.759 correct |
+| cl-13 | multi-hop | agent_init.py 重构把 AIAgent.__init__ 的 | hermes-agent-init-refactoring、hermes-provider-profile-design、hermes-agent-init-structure | hermes-agent-init-refactoring✓ 0.718 | hermes-agent-init-refactoring✓ 49.080 | hermes-agent-init-refactoring✓ 0.280 | hermes-arch-quickpass-day1-2✗ 0.655 ambiguous | hermes-arch-quickpass-day1-2✗ 0.655 ambiguous | hermes-agent-init-refactoring✓ 0.718 correct |
+| ng-01 | negative | 家里装修选什么乳胶漆，环保等级怎么区分 | 无（应拦截） | deepeval-vs-langfuse 0.453 | hermes-tool-execution-finalize-phase 10.390 | deepeval-vs-langfuse 0.095 | hermes-request-assembly-extras 0.000 incorrect | hermes-request-assembly-extras 0.000 incorrect | deepeval-vs-langfuse 0.453 ambiguous |
+| ng-02 | negative | 推荐上海三甲医院附近的川菜馆 | 无（应拦截） | hermes-arch-quickpass-day1-2 0.329 | hermes-cron-job-troubleshooting-2026-07-27 6.003 | hermes-tool-execution-finalize-phase 0.163 | hermes-tool-call-message-structure 0.000 incorrect | hermes-arch-quickpass-day1-2 0.000 incorrect | hermes-arch-quickpass-day1-2 0.329 ambiguous |
+| ng-03 | negative | 比特币今天价格是多少 | 无（应拦截） | hermes-anthropic-cache-control 0.471 | hermes-anthropic-cache-control 10.237 | hermes-tool-execution-finalize-phase 0.168 | hermes-response-handling-phase 0.001 incorrect | hermes-response-handling-phase 0.001 incorrect | hermes-anthropic-cache-control 0.471 ambiguous |
+| ng-04 | negative | NBA 湖人队 2026 赛季夺冠赔率 | 无（应拦截） | prompt-cache-prefix-stability 0.372 | hermes-cron-job-troubleshooting-2026-07-27 7.344 | rag-retrieval-pipeline 0.116 | cross-encoder 0.002 incorrect | cross-encoder 0.002 incorrect | prompt-cache-prefix-stability 0.372 ambiguous |
+| ng-05 | negative | 手冲咖啡的水粉比应该怎么控制 | 无（应拦截） | hermes-pre-api-pressure-check 0.464 | hermes-arch-quickpass-day1-2 7.253 | hermes-arch-quickpass-day1-2 0.126 | hermes-loop-counter-init 0.000 incorrect | hermes-loop-counter-init 0.000 incorrect | hermes-pre-api-pressure-check 0.464 ambiguous |
+| ng-06 | negative | 阳台种多肉植物需要注意什么，多久浇一次水 | 无（应拦截） | hermes-tool-execution-finalize-phase 0.406 | think-block 9.790 | hermes-error-recovery-phase 0.083 | hermes-loop-entry-phase 0.000 incorrect | hermes-loop-entry-phase 0.000 incorrect | hermes-tool-execution-finalize-phase 0.406 ambiguous |
+| ng-07 | negative | 杭州哪家医院看骨科比较好 | 无（应拦截） | hermes-tool-execution-finalize-phase 0.327 | hermes-arch-quickpass-day1-2 5.890 | hermes-tool-execution-finalize-phase 0.199 | hermes-vaultrag-interview 0.000 incorrect | hermes-vaultrag-interview 0.000 incorrect | hermes-tool-execution-finalize-phase 0.327 ambiguous |
+| ng-08 | negative | 推荐几部 2026 年值得看的科幻电影 | 无（应拦截） | hermes-cron-job-troubleshooting-2026-07-27 0.336 | think-block 8.205 | rag-retrieval-pipeline 0.115 | vaultrag-positioning-and-evolution 0.015 incorrect | vaultrag-positioning-and-evolution 0.015 incorrect | hermes-cron-job-troubleshooting-2026-07-27 0.336 ambiguous |
+| ng-09 | negative | 冬季露营需要准备哪些装备，睡袋温标怎么选 | 无（应拦截） | hermes-obsidian-llm-wiki-setup 0.419 | hermes-loop-entry-phase 8.104 | hermes-loop-entry-phase 0.149 | hermes-tool-call-message-structure 0.000 incorrect | hermes-tool-call-message-structure 0.000 incorrect | hermes-obsidian-llm-wiki-setup 0.419 ambiguous |
+| ng-10 | negative | 家常红烧肉怎么做才能肥而不腻，关键步骤有哪些 | 无（应拦截） | hermes-arch-quickpass-day1-2 0.429 | hermes-feishu-adapter-setup 14.118 | hermes-arch-quickpass-day1-2 0.142 | hermes-run-conversation-interview 0.000 incorrect | hermes-run-conversation-interview 0.000 incorrect | hermes-arch-quickpass-day1-2 0.429 ambiguous |
+| ng-11 | negative | 新手养猫指南：猫砂盆怎么选，猫咪疫苗该按什么时间打 | 无（应拦截） | hermes-message-sanitize 0.415 | hermes-prefill-messages 15.133 | hermes-feishu-adapter-setup 0.146 | hermes-feishu-adapter-setup 0.000 incorrect | hermes-feishu-adapter-setup 0.000 incorrect | hermes-message-sanitize 0.415 ambiguous |
+| ng-12 | negative | 周末郊野公园徒步，如何规划路线和准备补给 | 无（应拦截） | hermes-obsidian-llm-wiki-setup 0.460 | hermes-agent-init-refactoring 9.707 | hermes-loop-entry-phase 0.178 | hermes-step-callback-explained 0.000 incorrect | hermes-step-callback-explained 0.000 incorrect | hermes-obsidian-llm-wiki-setup 0.460 ambiguous |
+| ng-13 | negative | 最近热播的悬疑剧有哪些，哪部评分最高 | 无（应拦截） | think-block 0.371 | hermes-tool-schema-registry 11.277 | think-block 0.144 | hermes-cron-job-troubleshooting-2026-07-27 0.003 incorrect | hermes-cron-job-troubleshooting-2026-07-27 0.004 incorrect | think-block 0.371 ambiguous |
+| ng-14 | negative | 演唱会门票一般在哪个平台开售，抢票有什么技巧 | 无（应拦截） | hermes-llm-call-chain 0.453 | gitignore-anchor-and-check-ignore 13.089 | hermes-feishu-adapter-setup 0.225 | hermes-run-conversation-interview 0.000 incorrect | hermes-run-conversation-interview 0.000 incorrect | hermes-llm-call-chain 0.453 ambiguous |
+| ng-15 | negative | 英雄联盟新赛季版本更新了哪些英雄改动 | 无（应拦截） | message-role 0.448 | hermes-step-callback-explained 10.902 | query-rewriting 0.064 | message-role 0.013 incorrect | message-role 0.013 incorrect | message-role 0.448 ambiguous |
+| sh-36 | single-hop | Hermes 每个回合的上下文是怎么从零开始构建的？build_turn | hermes-build-turn-context | hermes-loop-entry-phase✗ 0.736 | hermes-conversation-loop-run-conversation✗ 27.388 | hermes-build-turn-context✓ 0.233 | hermes-run-conversation-interview✗ 0.888 ambiguous | hermes-run-conversation-interview✗ 0.888 ambiguous | hermes-loop-entry-phase✗ 0.736 correct |
+| sh-37 | single-hop | cron 任务超时没跑完，内容是不是就丢了？怎么排查 cron job  | hermes-cron-job-troubleshooting-2026-07-27 | hermes-cron-job-troubleshooting-2026-07-27✓ 0.644 | hermes-cron-job-troubleshooting-2026-07-27✓ 39.456 | hermes-cron-job-troubleshooting-2026-07-27✓ 0.266 | hermes-cron-job-troubleshooting-2026-07-27✓ 0.795 correct | hermes-cron-job-troubleshooting-2026-07-27✓ 0.796 correct | hermes-cron-job-troubleshooting-2026-07-27✓ 0.644 correct |
+| sh-38 | single-hop | Hermes Desktop 启动时 Electron 下载失败怎么办？ | hermes-desktop-launch-and-feishu-fix | hermes-desktop-launch-and-feishu-fix✓ 0.792 | hermes-desktop-launch-and-feishu-fix✓ 38.104 | hermes-feishu-markdown-issue✗ 0.346 | hermes-desktop-launch-and-feishu-fix✓ 0.878 correct | hermes-desktop-launch-and-feishu-fix✓ 0.876 correct | hermes-desktop-launch-and-feishu-fix✓ 0.792 correct |
+| sh-39 | single-hop | 飞书 Markdown 消息在 Hermes 里显示格式错乱，问题出在哪 | hermes-feishu-markdown-issue | hermes-feishu-markdown-issue✓ 0.761 | hermes-feishu-markdown-issue✓ 28.389 | hermes-feishu-markdown-issue✓ 0.376 | hermes-feishu-markdown-issue✓ 0.779 correct | hermes-feishu-markdown-issue✓ 0.779 correct | hermes-feishu-markdown-issue✓ 0.761 correct |
+| sh-40 | single-hop | 用户消息发到一半被打断，Hermes 怎么保存已经生成的部分回复？ | hermes-interrupt-partial-response-save | hermes-interrupt-partial-response-save✓ 0.753 | hermes-response-handling-phase✗ 19.236 | hermes-interrupt-partial-response-save✓ 0.132 | hermes-interrupt-partial-response-save✓ 0.953 ambiguous | hermes-interrupt-partial-response-save✓ 0.953 ambiguous | hermes-interrupt-partial-response-save✓ 0.753 correct |
+| sh-41 | single-hop | DeepEval 和 Langfuse 都是 LLM 评测观测工具，它们 | deepeval-vs-langfuse | deepeval-vs-langfuse✓ 0.766 | deepeval-vs-langfuse✓ 30.686 | deepeval-vs-langfuse✓ 0.244 | deepeval-vs-langfuse✓ 1.000 correct | deepeval-vs-langfuse✓ 1.000 correct | deepeval-vs-langfuse✓ 0.766 correct |
+| sh-42 | single-hop | Python 里动态加载模块的几种方式分别是什么？importlib 和 | Python_Dynamic_Module_Loading@20260713_081905 | hermes-agent-init-refactoring✗ 0.624 | hermes-compression-per-turn-state-reset✗ 29.334 | hermes-agent-init-structure✗ 0.196 | hermes-request-assembly-extras✗ 0.020 incorrect | hermes-request-assembly-extras✗ 0.020 incorrect | hermes-agent-init-refactoring✗ 0.624 correct |
+| sh-43 | single-hop | Hermes 识别用户意图（比如区分聊天和任务）是怎么做的？有专门的笔记 | hermes-intent-recognition-interview | hermes-intent-recognition-interview✓ 0.720 | hermes-intent-recognition-interview✓ 29.654 | hermes-intent-recognition-interview✓ 0.171 | hermes-intent-recognition-interview✓ 0.907 correct | hermes-intent-recognition-interview✓ 0.908 correct | hermes-intent-recognition-interview✓ 0.720 correct |
+| mh-36 | multi-hop | Hermes 的 LLM 调用链从 conversation_loop  | hermes-llm-call-chain、hermes-conversation-loop-run-conversation、hermes-run-conversation-interview | hermes-llm-call-chain✓ 0.780 | hermes-llm-call-chain✓ 64.417 | hermes-llm-call-chain✓ 0.173 | hermes-arch-quickpass-day1-2✗ 0.351 ambiguous | hermes-arch-quickpass-day1-2✗ 0.351 ambiguous | hermes-llm-call-chain✓ 0.780 correct |
+| mh-37 | single-hop | Obsidian vault 作为 llm-wiki 的知识库，Herm | hermes-obsidian-llm-wiki-setup | hermes-obsidian-llm-wiki-setup✓ 0.733 | hermes-obsidian-llm-wiki-setup✓ 42.930 | hermes-obsidian-llm-wiki-setup✓ 0.243 | hermes-obsidian-llm-wiki-setup✓ 0.743 correct | hermes-obsidian-llm-wiki-setup✓ 0.747 correct | hermes-obsidian-llm-wiki-setup✓ 0.733 correct |
+| mh-38 | multi-hop | Hermes 的消息消毒和消息规范化都是发请求前处理消息，两者分别管什么 | hermes-message-sanitize、hermes-message-normalization | hermes-message-sanitize✓ 0.819 | hermes-message-sanitize✓ 65.885 | hermes-message-sanitize✓ 0.167 | hermes-request-assembly-extras✗ 0.831 correct | hermes-request-assembly-extras✗ 0.829 correct | hermes-message-sanitize✓ 0.819 correct |
+| ab-16 | abbreviation | MCP 是什么协议？它和 Function Calling 有什么区别？ | hermes-arch-quickpass-day1-2 | hermes-arch-quickpass-day1-2✓ 0.726 | hermes-arch-quickpass-day1-2✓ 32.986 | hermes-arch-quickpass-day1-2✓ 0.288 | think-block✗ 0.002 incorrect | think-block✗ 0.002 incorrect | hermes-arch-quickpass-day1-2✓ 0.726 correct |
+| ab-17 | abbreviation | TTS 是什么？LLM 输出怎么转成语音？ | hermes-loop-entry-phase | hermes-feishu-adapter-setup✗ 0.546 | cross-encoder✗ 12.996 | hermes-run-conversation-interview✗ 0.074 | hermes-loop-entry-phase✓ 0.015 incorrect | hermes-loop-entry-phase✓ 0.014 incorrect | hermes-feishu-adapter-setup✗ 0.546 correct |
+| ab-18 | abbreviation | AOP 里的 Pointcut、Advice、Weaving 分别是什么 | DeepSeek - Java AOP切面详解 | hermes-provider-profile-design✗ 0.513 | hermes-compression-per-turn-state-reset✗ 26.618 | python-asyncio-coroutine-streaming✗ 0.117 | hook-function✗ 0.001 incorrect | hook-function✗ 0.001 incorrect | hermes-provider-profile-design✗ 0.513 correct |
 
-## 一·五、硬核指标（4 个绝对数字，生产配置：面包屑+1600，2026-08-22）
+### 横向聚合（hit@1 / guard 拦截率 / top1 分数）
 
-> 平均指标（Hit@1/Recall@5/MRR）在多期望查询集下会掩盖"没找全"——改用绝对数字。
+| 变体 | 多跳 hit@1 | 单跳 hit@1 | 负样本拦截 | top1 均值 | top1 中位数 |
+|---|---|---|---|---|---|
+| pure_vector | 79.4% | 80.6% | — | 0.6632 | 0.7184 |
+| pure_bm25 | 85.3% | 75.0% | — | 37.5279 | 34.9885 |
+| hybrid_no_rerank | 76.5% | 72.2% | — | 0.2091 | 0.2019 |
+| hybrid_rerank | 47.1% | 50.0% | 100.0% | 0.495 | 0.5174 |
+| graph | 47.1% | 50.0% | 100.0% | 0.4949 | 0.5174 |
+| langchain | 79.4% | 80.6% | 0.0% | 0.6632 | 0.7184 |
 
-| 指标 | 结果 | 目标 | 判定 |
-|------|------|------|------|
-| single-hop Top1 命中 | **14/35** | ≥30/35 | ❌ 大缺口 |
-| multi-hop 完全命中（所有 expected 在注入内） | **4/20** | ≥16/20 | ❌ 大缺口 |
-| abbreviation Top1 命中 | **4/15** | ≥13/15 | ❌ 大缺口 |
-| negative 误报 | **0/15** | 0/15 | ✅ 达标 |
+## 二、纵向对比：基线（混合+rerank） vs 演进后（+双链图扩展）
 
-**结论（诚实）**：之前"Hit@1 80% / Recall@5 93%"是注入多个来源里"至少 1 个相关"的宽松口径，掩盖了真实短板——**multi-hop 找不全（20% 完全命中）和 single-hop/abbreviation 的 top1 不准**。negative 拦截是真达标（0 误报）。**下一步唯一要改的是检索层**：multi-hop 多概念查询只召回 1 篇（需候选多样性/查询拆分），single-hop/abbreviation 的 top1 排序（需查询扩展/标题增强）。
+| id | type | 查询 | D top1(分数/verdict) | E top1(分数/verdict) | Δtop1 | 迁移 |
+|---|---|---|---|---|---|---|
+| sh-01 | single-hop | MoA 是什么 | hermes-request-assembly-extras✗ 0.742 ambiguous | hermes-request-assembly-extras✗ 0.738 ambiguous | -0.004 | — |
+| sh-02 | single-hop | RRF 融合原理 | cross-encoder✗ 0.478 correct | cross-encoder✗ 0.483 correct | +0.005 | — |
+| sh-03 | single-hop | cross-encoder 是什么 | cross-encoder✓ 0.968 correct | cross-encoder✓ 0.968 correct | +0.000 | — |
+| sh-04 | multi-hop | vaultrag 的 fail-open 是什么意思 | rag-retrieval-pipeline✓ 0.432 correct | rag-retrieval-pipeline✓ 0.431 correct | -0.001 | — |
+| sh-05 | single-hop | Hermes 消息规范化做了什么 | hermes-message-normalization✓ 0.917 correct | hermes-message-normalization✓ 0.917 correct | +0.000 | — |
+| sh-06 | single-hop | DB2 获取执行计划有哪三种方式 | hermes-interim-text-dedup✗ 0.007 incorrect | hermes-interim-text-dedup✗ 0.007 incorrect | +0.000 | — |
+| sh-07 | single-hop | 查询改写有哪三种策略 | query-rewriting✓ 0.436 correct | query-rewriting✓ 0.439 correct | +0.003 | — |
+| sh-08 | multi-hop | Causal Coupling guard 解决的是什么问题 | hermes-arch-quickpass-day1-2✓ 0.427 correct | hermes-arch-quickpass-day1-2✓ 0.427 correct | +0.000 | — |
+| sh-09 | single-hop | in_place 压缩和 rotation 压缩的区别 | hermes-loop-entry-phase✗ 0.957 correct | hermes-loop-entry-phase✗ 0.958 correct | +0.001 | — |
+| sh-10 | single-hop | Hermes 每回合开头为什么要清空压缩状态？gateway | hermes-conversation-loop-run-conversation✗ 0.769 ambiguous | hermes-conversation-loop-run-conversation✗ 0.763 ambiguous | -0.006 | — |
+| sh-11 | single-hop | MoA 回合发聚合请求前，参考模型们的回答是怎么汇总并塞进请 | hermes-loop-entry-phase✗ 0.608 correct | hermes-loop-entry-phase✗ 0.608 correct | +0.000 | — |
+| sh-12 | single-hop | 模型看到的工具菜单不是全量发的，工具 schema 从注册到 | hermes-tool-schema-registry✓ 0.214 incorrect | hermes-tool-schema-registry✓ 0.214 incorrect | +0.000 | — |
+| sh-13 | single-hop | 为什么要把工具调用的 arguments 重新序列化成键排序 | hermes-run-conversation-interview✗ 0.719 correct | hermes-run-conversation-interview✗ 0.716 correct | -0.003 | — |
+| sh-14 | single-hop | /steer 和 interrupt 到底有什么区别？为什么 | hermes-steer-mechanism✓ 0.270 incorrect | hermes-steer-mechanism✓ 0.270 incorrect | +0.000 | — |
+| sh-15 | single-hop | 认证池 credential pool 是干嘛的？同一 pr | hermes-error-recovery-phase✗ 0.170 incorrect | hermes-error-recovery-phase✗ 0.170 incorrect | +0.001 | — |
+| sh-16 | single-hop | prefill messages 是干什么用的？插在消息的什 | hermes-prefill-messages✓ 0.201 incorrect | hermes-prefill-messages✓ 0.204 incorrect | +0.003 | — |
+| sh-17 | single-hop | 同一个过程旁白为什么会在一个回合里被重复推送？_delive | hermes-interim-text-dedup✓ 0.828 correct | hermes-interim-text-dedup✓ 0.828 correct | -0.000 | — |
+| sh-18 | single-hop | RAG 里的 rerank 到底是个什么东西？它跟拿来算向量 | hermes-vaultrag-interview✗ 0.473 ambiguous | hermes-vaultrag-interview✗ 0.473 ambiguous | +0.000 | — |
+| sh-19 | single-hop | 主模型一直 429 限流，Hermes 会自动换一个备用 p | fallback✓ 0.788 ambiguous | fallback✓ 0.788 ambiguous | +0.000 | — |
+| sh-20 | single-hop | DB2 有个 SQL 特别慢，我怎么拿到它的执行计划看看优化 | hermes-llm-call-chain✗ 0.009 incorrect | hermes-llm-call-chain✗ 0.009 incorrect | +0.000 | — |
+| sh-21 | single-hop | OpenAI 兼容接口的 messages 里 role 都 | hermes-run-conversation-interview✗ 0.508 correct | hermes-run-conversation-interview✗ 0.508 correct | +0.000 | — |
+| sh-22 | single-hop | 模型输出里出现 这种标签是怎么回事？Hermes 为什么要把 | hermes-interrupt-partial-response-save✗ 0.543 correct | hermes-interrupt-partial-response-save✗ 0.536 correct | -0.007 | — |
+| sh-23 | single-hop | .gitignore 里写了 build/，结果把子目录 h | gitignore-anchor-and-check-ignore✓ 0.024 incorrect | gitignore-anchor-and-check-ignore✓ 0.025 incorrect | +0.001 | — |
+| sh-24 | single-hop | Python 的协程和线程到底差在哪？为什么说协程切换成本低 | python-asyncio-coroutine-streaming✓ 0.076 incorrect | python-asyncio-coroutine-streaming✓ 0.076 incorrect | +0.000 | — |
+| sh-25 | single-hop | Java 线程安全的集合应该怎么选？ConcurrentHa | hermes-request-execution-phase✗ 0.001 incorrect | hermes-request-execution-phase✗ 0.001 incorrect | +0.000 | — |
+| sh-33 | single-hop | Hermes 里一次工具调用的消息结构是什么样的？tool_ | message-role✗ 0.864 ambiguous | message-role✗ 0.863 ambiguous | -0.001 | — |
+| sh-35 | single-hop | prompt cache 的前缀稳定性为什么重要？Herme | prompt-cache-prefix-stability✓ 0.906 ambiguous | prompt-cache-prefix-stability✓ 0.906 ambiguous | +0.000 | — |
+| mh-02 | multi-hop | Hermes 压缩和 prompt cache 前缀稳定性是 | prompt-cache-prefix-stability✓ 0.970 ambiguous | prompt-cache-prefix-stability✓ 0.970 ambiguous | +0.000 | — |
+| mh-03 | multi-hop | MoA 聚合上下文注入在 Hermes 里是怎么实现的 | hermes-moa-context-injection✓ 0.977 correct | hermes-moa-context-injection✓ 0.977 correct | +0.000 | — |
+| mh-04 | multi-hop | RRF 为什么比直接加权融合好，vaultrag 里是怎么用 | vaultrag-positioning-and-evolution✓ 0.405 ambiguous | vaultrag-positioning-and-evolution✓ 0.405 ambiguous | +0.000 | — |
+| mh-05 | multi-hop | cross-encoder 为什么比 bi-encoder  | cross-encoder✓ 0.367 ambiguous | cross-encoder✓ 0.368 ambiguous | +0.002 | — |
+| mh-06 | multi-hop | context engine 和压缩机制有什么区别，vaul | hermes-request-assembly-extras✗ 0.238 incorrect | hermes-request-assembly-extras✗ 0.243 incorrect | +0.004 | — |
+| mh-07 | multi-hop | 查询改写有哪几种策略，vaultrag 为什么当前没做 | query-rewriting✓ 0.292 incorrect | query-rewriting✓ 0.293 incorrect | +0.002 | — |
+| mh-08 | multi-hop | Hermes 压缩 in_place 模式为什么需要 _la | hermes-loop-entry-phase✗ 0.842 correct | hermes-loop-entry-phase✗ 0.842 correct | +0.000 | — |
+| mh-09 | single-hop | TCC、Seata AT 和 Saga 三种分布式事务模式怎 | hermes-live-set-active-messages✗ 0.001 incorrect | hermes-live-set-active-messages✗ 0.001 incorrect | +0.000 | — |
+| mh-10 | multi-hop | prompt cache 前缀稳定性给 Hermes 注入类 | prompt-cache-prefix-stability✓ 0.958 ambiguous | prompt-cache-prefix-stability✓ 0.958 ambiguous | -0.000 | — |
+| mh-11 | multi-hop | Hermes 为了保住 prompt cache 前缀稳定做 | hermes-conversation-loop-run-conversation✗ 0.959 ambiguous | hermes-conversation-loop-run-conversation✗ 0.958 ambiguous | -0.000 | — |
+| mh-12 | multi-hop | run_conversation 这个几千行的函数整体分哪几 | hermes-request-assembly-extras✓ 0.882 ambiguous | hermes-request-assembly-extras✓ 0.882 ambiguous | +0.000 | — |
+| mh-13 | multi-hop | 上下文压缩的 rotation 模式为什么被 in-plac | hermes-loop-entry-phase✗ 0.792 ambiguous | hermes-loop-entry-phase✗ 0.790 ambiguous | -0.002 | — |
+| mh-14 | multi-hop | 发请求前的消息消毒会修哪两类脏数据？什么样的工具调用消息结构 | hermes-message-sanitize✓ 0.935 correct | hermes-message-sanitize✓ 0.936 correct | +0.001 | — |
+| mh-15 | multi-hop | 响应处理阶段 D 和错误恢复阶段 E 是什么关系？一个看响应 | hermes-response-handling-phase✓ 0.344 ambiguous | hermes-response-handling-phase✓ 0.341 ambiguous | -0.003 | — |
+| mh-16 | multi-hop | 请求执行阶段的中层 retry 循环一直延伸到哪？模型说要调 | hermes-run-conversation-interview✗ 0.388 ambiguous | hermes-run-conversation-interview✗ 0.389 ambiguous | +0.001 | — |
+| mh-17 | multi-hop | gateway 的钩子插件靠什么信号感知 agent 每步进 | hermes-live-set-active-messages✗ 0.920 correct | hermes-live-set-active-messages✗ 0.918 correct | -0.002 | — |
+| mh-18 | multi-hop | Hermes 的插件钩子能在发请求前改写发给 provide | hermes-request-assembly-extras✗ 0.714 ambiguous | hermes-request-assembly-extras✗ 0.710 ambiguous | -0.004 | — |
+| mh-19 | multi-hop | vaultrag 检索时先混合检索再 rerank，这两步分 | cross-encoder✓ 0.903 correct | cross-encoder✓ 0.901 correct | -0.002 | — |
+| mh-20 | multi-hop | 上下文超窗被压缩后，模型下一次加载会话看到的 live 集变 | hermes-live-set-active-messages✓ 0.087 incorrect | hermes-live-set-active-messages✓ 0.087 incorrect | -0.000 | — |
+| ab-02 | abbreviation | CRAG 三档评估是什么 | vaultrag-positioning-and-evolution✗ 0.125 incorrect | vaultrag-positioning-and-evolution✗ 0.128 incorrect | +0.002 | — |
+| ab-03 | abbreviation | HyDE 是什么 | query-rewriting✓ 0.061 incorrect | query-rewriting✓ 0.061 incorrect | -0.001 | — |
+| ab-05 | abbreviation | MoA 是什么？它和 MoE 有什么区别？ | hermes-vaultrag-interview✗ 0.298 incorrect | hermes-vaultrag-interview✗ 0.298 incorrect | +0.000 | — |
+| ab-06 | abbreviation | KV cache 前缀稳定是什么意思？为什么要保证发出去的消 | hermes-conversation-loop-run-conversation✗ 0.826 correct | hermes-conversation-loop-run-conversation✗ 0.824 correct | -0.002 | — |
+| ab-07 | abbreviation | cache_control 是什么？Anthropic 提示 | hermes-anthropic-cache-control✓ 0.991 correct | hermes-anthropic-cache-control✓ 0.991 correct | +0.000 | — |
+| ab-08 | abbreviation | OAuth token 或 API key 被限流（429） | hermes-loop-entry-phase✗ 0.918 correct | hermes-loop-entry-phase✗ 0.919 correct | +0.001 | — |
+| ab-09 | abbreviation | TTS 管线靠什么提前开始合成音频？流式回调 stream_ | hermes-loop-entry-phase✓ 0.980 correct | hermes-loop-entry-phase✓ 0.980 correct | +0.000 | — |
+| ab-10 | abbreviation | RRF 是什么？BM25 和向量检索两个结果集的排名是怎么融 | rag-retrieval-pipeline✓ 0.483 correct | rag-retrieval-pipeline✓ 0.483 correct | +0.000 | — |
+| ab-11 | abbreviation | MoA 和 MoE 到底有什么区别？总感觉两个都是多模型，面 | hermes-loop-entry-phase✗ 0.973 correct | hermes-loop-entry-phase✗ 0.973 correct | -0.000 | — |
+| ab-12 | abbreviation | TCC 和 Saga 都是分布式事务方案，各自适合什么场景？ | fallback✗ 0.000 incorrect | fallback✗ 0.000 incorrect | +0.000 | — |
+| ab-13 | abbreviation | AOP 里的 Pointcut、Advice、Weaving | hook-function✗ 0.002 incorrect | hook-function✗ 0.002 incorrect | -0.000 | — |
+| ab-14 | abbreviation | HyDE 是什么检索技巧？它怎么解决查询太模糊、检索不到东西 | query-rewriting✓ 0.229 incorrect | query-rewriting✓ 0.232 incorrect | +0.003 | — |
+| cl-01 | multi-hop | prompt cache 和消息规范化有什么关系 | think-block✗ 0.585 ambiguous | think-block✗ 0.588 ambiguous | +0.003 | — |
+| cl-02 | multi-hop | 上下文压缩和消息角色交替有什么联系 | hermes-run-conversation-interview✗ 0.169 incorrect | hermes-run-conversation-interview✗ 0.169 incorrect | +0.000 | — |
+| cl-03 | single-hop | fallback 和重试的区别是什么 | hermes-request-execution-phase✗ 0.517 ambiguous | hermes-request-execution-phase✗ 0.517 ambiguous | +0.000 | — |
+| cl-04 | multi-hop | Hermes 说"不信任任何上游"，消息消毒和消息规范化是不 | message-role✗ 0.721 ambiguous | message-role✗ 0.721 ambiguous | +0.000 | — |
+| cl-05 | multi-hop | Hermes 每回合开头要重置哪些 per-turn 状态？ | hermes-conversation-loop-run-conversation✗ 0.938 correct | hermes-conversation-loop-run-conversation✗ 0.939 correct | +0.001 | — |
+| cl-06 | multi-hop | MoA 聚合上下文和 prefill messages 都是 | hermes-api-messages-build✗ 0.669 ambiguous | hermes-api-messages-build✗ 0.668 ambiguous | -0.001 | — |
+| cl-07 | multi-hop | RAG 两阶段检索为什么是 bi-encoder 粗召回 + | cross-encoder✓ 0.194 incorrect | cross-encoder✓ 0.196 incorrect | +0.002 | — |
+| cl-08 | multi-hop | Hermes 发给 provider 的请求参数 api_k | hermes-provider-profile-design✗ 0.922 correct | hermes-provider-profile-design✗ 0.924 correct | +0.002 | — |
+| cl-09 | multi-hop | 消息角色交替违规会导致 provider 静默返回空内容，这 | hermes-request-assembly-extras✗ 0.988 correct | hermes-request-assembly-extras✗ 0.988 correct | +0.000 | — |
+| cl-10 | multi-hop | MoA 的 base64 魔数前缀消息和上下文注入都会往消息 | hermes-conversation-loop-run-conversation✗ 0.891 correct | hermes-conversation-loop-run-conversation✗ 0.891 correct | +0.000 | — |
+| cl-11 | multi-hop | 查询改写会把一个问题拆成多个子查询，每个子查询都要重新走检索 | query-rewriting✓ 0.568 correct | query-rewriting✓ 0.565 correct | -0.003 | — |
+| cl-12 | multi-hop | run_agent.py 里的转发器和 conversati | hermes-conversation-loop-run-conversation✓ 0.760 ambiguous | hermes-conversation-loop-run-conversation✓ 0.760 ambiguous | +0.000 | — |
+| cl-13 | multi-hop | agent_init.py 重构把 AIAgent.__in | hermes-arch-quickpass-day1-2✗ 0.655 ambiguous | hermes-arch-quickpass-day1-2✗ 0.655 ambiguous | +0.000 | — |
+| ng-01 | negative | 家里装修选什么乳胶漆，环保等级怎么区分 | hermes-request-assembly-extras 0.000 incorrect | hermes-request-assembly-extras 0.000 incorrect | +0.000 | — |
+| ng-02 | negative | 推荐上海三甲医院附近的川菜馆 | hermes-tool-call-message-structure 0.000 incorrect | hermes-arch-quickpass-day1-2 0.000 incorrect | +0.000 | — |
+| ng-03 | negative | 比特币今天价格是多少 | hermes-response-handling-phase 0.001 incorrect | hermes-response-handling-phase 0.001 incorrect | +0.000 | — |
+| ng-04 | negative | NBA 湖人队 2026 赛季夺冠赔率 | cross-encoder 0.002 incorrect | cross-encoder 0.002 incorrect | +0.000 | — |
+| ng-05 | negative | 手冲咖啡的水粉比应该怎么控制 | hermes-loop-counter-init 0.000 incorrect | hermes-loop-counter-init 0.000 incorrect | +0.000 | — |
+| ng-06 | negative | 阳台种多肉植物需要注意什么，多久浇一次水 | hermes-loop-entry-phase 0.000 incorrect | hermes-loop-entry-phase 0.000 incorrect | +0.000 | — |
+| ng-07 | negative | 杭州哪家医院看骨科比较好 | hermes-vaultrag-interview 0.000 incorrect | hermes-vaultrag-interview 0.000 incorrect | +0.000 | — |
+| ng-08 | negative | 推荐几部 2026 年值得看的科幻电影 | vaultrag-positioning-and-evolution 0.015 incorrect | vaultrag-positioning-and-evolution 0.015 incorrect | +0.000 | — |
+| ng-09 | negative | 冬季露营需要准备哪些装备，睡袋温标怎么选 | hermes-tool-call-message-structure 0.000 incorrect | hermes-tool-call-message-structure 0.000 incorrect | +0.000 | — |
+| ng-10 | negative | 家常红烧肉怎么做才能肥而不腻，关键步骤有哪些 | hermes-run-conversation-interview 0.000 incorrect | hermes-run-conversation-interview 0.000 incorrect | +0.000 | — |
+| ng-11 | negative | 新手养猫指南：猫砂盆怎么选，猫咪疫苗该按什么时间打 | hermes-feishu-adapter-setup 0.000 incorrect | hermes-feishu-adapter-setup 0.000 incorrect | +0.000 | — |
+| ng-12 | negative | 周末郊野公园徒步，如何规划路线和准备补给 | hermes-step-callback-explained 0.000 incorrect | hermes-step-callback-explained 0.000 incorrect | +0.000 | — |
+| ng-13 | negative | 最近热播的悬疑剧有哪些，哪部评分最高 | hermes-cron-job-troubleshooting-2026-07-27 0.003 incorrect | hermes-cron-job-troubleshooting-2026-07-27 0.004 incorrect | +0.000 | — |
+| ng-14 | negative | 演唱会门票一般在哪个平台开售，抢票有什么技巧 | hermes-run-conversation-interview 0.000 incorrect | hermes-run-conversation-interview 0.000 incorrect | +0.000 | — |
+| ng-15 | negative | 英雄联盟新赛季版本更新了哪些英雄改动 | message-role 0.013 incorrect | message-role 0.013 incorrect | +0.000 | — |
+| sh-36 | single-hop | Hermes 每个回合的上下文是怎么从零开始构建的？buil | hermes-run-conversation-interview✗ 0.888 ambiguous | hermes-run-conversation-interview✗ 0.888 ambiguous | +0.000 | — |
+| sh-37 | single-hop | cron 任务超时没跑完，内容是不是就丢了？怎么排查 cro | hermes-cron-job-troubleshooting-2026-07-27✓ 0.795 correct | hermes-cron-job-troubleshooting-2026-07-27✓ 0.796 correct | +0.001 | — |
+| sh-38 | single-hop | Hermes Desktop 启动时 Electron 下载 | hermes-desktop-launch-and-feishu-fix✓ 0.878 correct | hermes-desktop-launch-and-feishu-fix✓ 0.876 correct | -0.002 | — |
+| sh-39 | single-hop | 飞书 Markdown 消息在 Hermes 里显示格式错乱 | hermes-feishu-markdown-issue✓ 0.779 correct | hermes-feishu-markdown-issue✓ 0.779 correct | +0.000 | — |
+| sh-40 | single-hop | 用户消息发到一半被打断，Hermes 怎么保存已经生成的部分 | hermes-interrupt-partial-response-save✓ 0.953 ambiguous | hermes-interrupt-partial-response-save✓ 0.953 ambiguous | +0.000 | — |
+| sh-41 | single-hop | DeepEval 和 Langfuse 都是 LLM 评测观 | deepeval-vs-langfuse✓ 1.000 correct | deepeval-vs-langfuse✓ 1.000 correct | +0.000 | — |
+| sh-42 | single-hop | Python 里动态加载模块的几种方式分别是什么？impor | hermes-request-assembly-extras✗ 0.020 incorrect | hermes-request-assembly-extras✗ 0.020 incorrect | -0.000 | — |
+| sh-43 | single-hop | Hermes 识别用户意图（比如区分聊天和任务）是怎么做的？ | hermes-intent-recognition-interview✓ 0.907 correct | hermes-intent-recognition-interview✓ 0.908 correct | +0.001 | — |
+| mh-36 | multi-hop | Hermes 的 LLM 调用链从 conversation | hermes-arch-quickpass-day1-2✗ 0.351 ambiguous | hermes-arch-quickpass-day1-2✗ 0.351 ambiguous | +0.000 | — |
+| mh-37 | single-hop | Obsidian vault 作为 llm-wiki 的知识 | hermes-obsidian-llm-wiki-setup✓ 0.743 correct | hermes-obsidian-llm-wiki-setup✓ 0.747 correct | +0.003 | — |
+| mh-38 | multi-hop | Hermes 的消息消毒和消息规范化都是发请求前处理消息，两 | hermes-request-assembly-extras✗ 0.831 correct | hermes-request-assembly-extras✗ 0.829 correct | -0.002 | — |
+| ab-16 | abbreviation | MCP 是什么协议？它和 Function Calling  | think-block✗ 0.002 incorrect | think-block✗ 0.002 incorrect | +0.000 | — |
+| ab-17 | abbreviation | TTS 是什么？LLM 输出怎么转成语音？ | hermes-loop-entry-phase✓ 0.015 incorrect | hermes-loop-entry-phase✓ 0.014 incorrect | -0.000 | — |
+| ab-18 | abbreviation | AOP 里的 Pointcut、Advice、Weaving | hook-function✗ 0.001 incorrect | hook-function✗ 0.001 incorrect | +0.000 | — |
 
-> 注意：硬核指标走生产路径（注入 top4 + guard 拦截），比评测脚本（检索 top5 无 guard）更严——差异是预期的，但 14/35、4/20 的低法是真问题。
+### 纵向聚合
 
-## 二、分块参数扫描（100 条查询集，有面包屑，标注修正后）
+- verdict 迁移计数：{"ambiguous→ambiguous": 25, "correct→correct": 35, "incorrect→incorrect": 40}
+- rerank top1 分数差（E−D）：均值 -0.0001 / 中位数 +0.0000
 
-| max_chunk_chars | Hit@1 | Recall@5 | MRR@10 | 块数 |
-|-----------------|-------|----------|--------|------|
-| 旧分块（无上限） | 80.0% | 92.7% | 0.875 | 1267 |
-| **1600 字符（生产）** | **80.0%** | 93.1% | **0.884** | 1748 |
-| 1200 字符 | 78.8% | **94.5%** | 0.873 | 1980 |
-| 800 字符 | （限流未跑） | | | |
+## 三、轻量业界框架对比
 
-**解读：**
-- **1600 是 trade-off 平衡点**：Hit@1 持平（80.0%）、MRR 最高（0.884）——只切真正超长的块（>1600），无碎片化副作用
-- **1200 激进切分**：Recall 最高（94.5%）但 Hit@1 降 1.2pp——碎片化伤 top1
-- **旧分块**：超长块 22.6%（最大 13876）稀释向量
-- 生产选 **1600 字符**（无损 + 微益）
+| 框架 | 状态 | 选型理由 |
+|---|---|---|
+| txtai | 未安装 → 跳过 | 本地优先路线与本插件『云端 embedding、零本地模型』约束冲突；个人库百篇级场景收益有限 |
+| LanceDB | 未安装 → 跳过 | 嵌入式向量库适合百万级向量；当前 121 篇/千余块，numpy 点积毫秒级足够，引入即违背零新依赖 |
+| langchain（已装） | 变体 F | 用其 OpenAIEmbeddings 走同一云端 bge-m3，搭简易向量 RAG 作业界对照 |
 
-## 三、面包屑消融（100 条查询集）
+## 四、结论：每一层加了什么、涨了多少
 
-| 组合 | Hit@1 | Recall@5 | MRR@10 |
-|------|-------|----------|--------|
-| ① 无面包屑+旧分块 | 75.3% | 90.2% | 0.848 |
-| ② 无面包屑+分块优化 | 72.9% | 92.4% | 0.831 |
-| ③ **有面包屑+旧分块**（无上限） | **80.0%** | 93.1% | **0.876** |
-| ④ 有面包屑+分块优化（1200） | 77.6% | **93.9%** | 0.867 |
+（由真实数据驱动的结论将在此生成：每层增量 = 变体间 hit@1/分数差。）
 
-> **挡位定义**：③"旧分块"= max_chunk_chars 无上限（10^9，纯标题切块）；④"分块优化"= 1200（超长二次切）。
-> **挡位演变**：初始对比在"无上限 vs 1200"两个极端之间做（2×2 消融）；参数扫描补测 1600 中间档（第二节），发现 1600 无损且 MRR 最优 → 生产定为 1600。
-> **数据批次说明**：本表为标注修正前的批次（①②③④同批）；第二节参数扫描为标注修正后的批次（ab-06/mh-09/sh-08 修正），两批 Hit@1/Recall 差异 ≤1.2pp，结论不变（面包屑 +4.7pp 方向一致）。
-> 对照：1600 档（修正后）= 80.0% / 93.1% / 0.884——与 ③ 的 Hit@1/Recall 恰好相同（巧合），MRR 差 0.008（1600 微优，超长块被切小的收益）。
-
-**面包屑贡献**（①→③ / ②→④）：Hit@1 稳定 +4.7pp——标题词进块文本，BM25/向量都受益
-
-## 四、rerank 对比（98 条子集，有面包屑索引）
-
-| 路径 | Hit@1 | Recall@5 | MRR@10 |
-|------|-------|----------|--------|
-| 混合检索（无 rerank） | **78.3%** | **92.0%** | **0.866** |
-| + cross-encoder rerank | 54.2% | 68.1% | 0.673 |
-
-**结论：rerank 在本场景（中文个人笔记库 + 面包屑长块）稳定负优化**——RRF 融合排序已够准，cross-encoder 对词面重合敏感（归档页/源码页被误排前面），排序噪声 > 增益。生产关闭 rerank，保留 guard 拦截。
-
-## 五、失败案例归因（11 条真失败）
-
-- **7 条排序问题**（期望在 top-16 但排 >5 位）：召回已成功，卡在排序——扩 top-N 或查询扩展可救
-- **4 条召回失败**（期望不在 top-16）：词不匹配（task_id/VM 沙箱 等），需查询扩展或标题增强
-- **标注修正 3 处**（ab-06/mh-09/sh-08）：评测方法论迭代，修正后 Hit@1 +1.2pp
-- 按笔记去重验证：无效（top5 本无同笔记重复）
-
-## 六、分块策略（当前生产）
-
-标题感知切块（## / ### 边界）+ 面包屑 + frontmatter tags + 超长二次切（max_chunk_chars=1600）：
-- 生产参数：1600 字符（参数扫描选定的 trade-off 平衡点）
-- 超长块二次切分：>1600 字符的块按段落再切（治 22.6% 超长块，原最大 13876）
-- 段落兜底：无 ## 结构时按空行分块（治 13.4% 单块笔记）
-- 完整数据：119 篇 → 1748 块（1600 档）
-
-## 七、评测脚本
-
-- `evals/eval_queries.py`：100 条查询集（5 类）
-- `evals/ablation_4combo.py`：2×2 消融 + rerank 对比（Hit@1/Recall@5/MRR@10）
-- `evals/verify_dedup.py`：按笔记去重验证（结论：无效）
-- `evals/verify_chunk_rank.py`：分块对期望笔记排名影响（限流中断，待补）
+---
+*报告由 `evals/run_eval.py` 自动生成，勿手改。*

@@ -269,30 +269,6 @@ class VaultRAGEngine(ContextEngine):
 
     # -- 核心：每回合检索注入 -------------------------------------------
 
-    # 缩写展开表（2026-08-22 评测驱动）：
-    # abbreviation 类查询（MCP/TTS/AOP/CRAG/HyDE 等）词面匹配差——
-    # 笔记里常写全称或正文深处才出现缩写，BM25 命中弱、guard 误拦截。
-    # 命中缩写的查询，追加全称再检索（不改变查询语义，只增强词面覆盖）。
-    # 词表来自评测查询集实际失败案例 + vault 笔记真实出现的缩写。
-    _ABBREV_EXPANSIONS = {
-        "MCP": "Model Context Protocol",
-        "TTS": "Text-to-Speech 语音合成",
-        "AOP": "Aspect Oriented Programming 面向切面编程",
-        "CRAG": "Corrective RAG 纠正式检索增强",
-        "HyDE": "Hypothetical Document Embeddings 假设文档嵌入",
-        "RRF": "Reciprocal Rank Fusion 倒数排名融合",
-        "MoA": "Mixture of Agents 多智能体协作",
-        "MoE": "Mixture of Experts 专家混合",
-        "BM25": "BM25 词法检索 关键词匹配",
-        "KV": "Key-Value 键值",
-        "OAuth": "OAuth 认证协议",
-        "LLM": "Large Language Model 大语言模型",
-        "RAG": "Retrieval Augmented Generation 检索增强生成",
-        "SQL": "Structured Query Language 结构化查询语言",
-        "TCC": "Try Confirm Cancel 分布式事务",
-        "Saga": "Saga 分布式事务长事务",
-    }
-
     # 多概念查询检测（2026-08-23，Adaptive RAG 查询复杂度感知的理论落地）：
     # 比较/关系标记 + 多分句/分隔符 → 该查询期望多个概念，无单块能覆盖整句，
     # guard 阈值应放宽（见 3.6b）。规则可解释，负样本（生活话题）不触发。
@@ -318,51 +294,21 @@ class VaultRAGEngine(ContextEngine):
 
     @classmethod
     def _enhance_guard_query(cls, query: str, pool: List[Dict]) -> str:
-        """构造 guard rerank 用的增强查询（query2doc 思想，2026-08-23）。
+        """构造 guard rerank 用的查询（2026-08-26 最终态：不做增强）。
 
-        q' = 展开查询（缩写已展开）+ 候选 top1 的标题/面包屑词——title 共现
-        是 cross-encoder 的强交互信号，共享 token 越多分数越高，让短查询的
-        rerank 分数自然上移（实测 AOP 0.121→0.271），不调 guard 阈值。
-        只取 top1 候选标题词（最多 6 个），避免词漂移污染负例区分度。
-
-        2026-08-23 修正：仅当查询命中缩写展开表（技术查询信号）时增强——
-        生活话题负样本（"医院/川菜/电影"）不触发缩写展开 → 不增强 →
-        rerank 分数不虚高 → 0 误报保持（实测增强版 3 误报全为生活查询）。
+        演进记录：
+        - query2doc 增强（query + top1 标题词，AOP 0.121→0.271）曾依赖
+          "命中缩写词表"做门控（仅技术查询增强，防生活话题误放行）。
+        - 2026-08-26 缩写展开机制删除（消融 evals/ablation_abbrev.py：
+          hit@1 零贡献，向量层已覆盖缩写语义）→ 门控信号消失。
+        - 无条件增强实测 5/5 生活负样本误放行（rerank 自匹配虚高），
+          不可行；英文/大写缩写门控会误伤 NBA 类生活查询。
+        - 最终决策：guard 用原始查询 rerank（最保守）。短技术查询
+          （AOP/TTS 类）裸喂时可能被拦（假阴性）——由 agent 弹性吸收：
+          LLM 理解缩写、可换词重查或用 search_files 兜底，引擎不做
+          LLM 该做的事。负样本拦截 100% 保持（硬指标）。
         """
-        expanded = cls._expand_abbrev(query)
-        if expanded == query:
-            return query  # 无缩写命中 → 不增强（防负样本误放行）
-        q = expanded
-        if pool:
-            import re as _re
-            top_text = pool[0].get("text", "")
-            header = top_text.split("\n", 1)[0] if top_text else ""
-            en_words = _re.findall(r"[a-z0-9]{3,}", header.lower())
-            cn_bigrams = []
-            for seg in _re.findall(r"[\u4e00-\u9fff]+", header):
-                cn_bigrams.extend(seg[i:i+2] for i in range(len(seg)-1) if len(seg) > 2)
-            extra = (en_words + cn_bigrams)[:6]
-            if extra:
-                q = q + " " + " ".join(extra)
-        return q
-
-    @classmethod
-    def _expand_abbrev(cls, query: str) -> str:
-        """查询缩写展开：命中词表的缩写，在原查询后追加全称。
-
-        只展开"查询里出现的词表缩写"（单词边界匹配，避免误伤），
-        返回展开后的查询；无命中返回原样。
-        """
-        if not query:
-            return query
-        expanded = []
-        for abbr, full in cls._ABBREV_EXPANSIONS.items():
-            # 单词边界匹配（中文语境：缩写前后是空白/标点/汉字边界）
-            if re.search(rf"(?<![A-Za-z]){re.escape(abbr)}(?![A-Za-z])", query):
-                expanded.append(f"{abbr}({full})")
-        if not expanded:
-            return query
-        return query + " " + " ".join(expanded)
+        return query
 
     def select_context(self, request_messages, *, conversation_messages=None, incoming_message=None, budget_tokens=0):
         """检索 vault，把命中片段注入请求。返回新消息列表；失败返回 None（fail-open）。"""
@@ -396,12 +342,6 @@ class VaultRAGEngine(ContextEngine):
                 trace["reason"] = "no-query"
                 self._emit_trace(trace)
                 return None
-
-            # 2.2 缩写展开（2026-08-22 评测驱动：abbreviation 类查询词面匹配差
-            #     ——"MCP/TTS/AOP" 等缩写 vs 笔记里的全称/正文，BM25 命中弱、
-            #     guard 误拦截。静态映射展开后再检索，不改变查询语义。）
-            query = self._expand_abbrev(query)
-            trace["query_expanded"] = query
 
             # 2.5 查询质量门槛（防噪音注入）：1 字确认消息（"好""嗯""谢谢"等）
             #     信息量不足 → 直接跳过。阈值已降到 2（见 _MIN_QUERY_CHARS 注释）。
@@ -628,11 +568,13 @@ def _cmd_llm_wiki_init(raw_args: str) -> str:
     total_docs = len(docs)
 
     # 2. 写配置（force=True：跳过未知键警告，自定义键允许写入）
+    #    注：只写 vault_path，不写 context.engine——引擎已迁入本插件
+    #    （rag-search/vaultrag/），context.engine=vaultrag 已无法被
+    #    load_context_engine 解析（2026-08-26 迁移修复）。
     try:
         from hermes_cli.config import set_config_value
 
         set_config_value("context.vaultrag.vault_path", str(root), force=True)
-        set_config_value("context.engine", "vaultrag", force=True)
     except Exception as e:
         return f"❌ 索引已建（{total_docs} 篇 / {total_chunks} 块），但配置写入失败: {e}"
 
@@ -640,8 +582,8 @@ def _cmd_llm_wiki_init(raw_args: str) -> str:
         f"✅ llm-wiki 初始化完成\n"
         f"  vault: {root}\n"
         f"  笔记: {total_docs} 篇 → {total_chunks} 块\n"
-        f"  已写入 context.vaultrag.vault_path + context.engine=vaultrag\n"
-        f"  重启 Hermes 后生效（或下一回合 select_context 懒加载）"
+        f"  已写入 context.vaultrag.vault_path（rag_search 工具读取）\n"
+        f"  重启 Hermes 后生效（或新会话工具集加载时生效）"
     )
 
 

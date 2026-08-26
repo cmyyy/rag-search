@@ -1,7 +1,7 @@
 """verify_guard_upgrade.py —— vaultrag "生产级检索 guard"升级验证（2026-08-19）。
 
 跑法（在 hermes-agent 目录下）：
-    .venv/Scripts/python.exe plugins/context_engine/vaultrag/verify_guard_upgrade.py
+    .venv/Scripts/python.exe plugins/rag-search/vaultrag/verify_guard_upgrade.py
 
 纯离线验证（不碰网络，不调真实 embedding/rerank API）——用伪造的
 EmbeddingClient + VaultIndex 驱动 select_context 管线，逐项断言 4 项改动：
