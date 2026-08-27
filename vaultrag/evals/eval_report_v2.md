@@ -7,6 +7,16 @@
 - 检索: bge-m3（embedding）+ bge-reranker-v2-m3（guard 判据）+ BM25，SiliconFlow 云端
 - 运行次数: 3（均值±std）| DeepEval 4.1.8，judge: DeepSeek
 
+## 金标准（Gold Standard）定义与构造
+
+金标准（英文 **Gold Standard**）指评测中"公认正确的参考答案"——被评测系统的输出与之对比以判定对错的标准集（同类术语：ground truth 基准真值；benchmark 基准测试集）。
+
+本评测的金标准 = 100 条「查询 → 期望命中笔记」标注对（evals/eval_queries.py）：
+1. **构造**：子 agent 并行通读 vault 全部 81 篇笔记，按 4 类（single-hop 单篇可答 / multi-hop 跨篇 / abbreviation 缩写 / negative 无关）生成查询，并标注 expected_notes（期望命中的笔记 stem 集合）
+2. **校验**：expected_notes 必须真实存在于 vault（grep 验证文件存在）——**存在≠相关**，只保留与查询强相关的标注，防止"标注了不存在的笔记"这类假金标准
+3. **使用**：L1/RQ1 用它判 hit@1 / Recall@5 / 完全命中（字面口径，文件名集合匹配）；L4/RQ3 用它构造 expected_output（金标准答案文本）供 LLM 判定语义覆盖
+4. **局限**：金标准由 agent 构造（非人工专家标注），存在主观性与词面泄漏风险（见局限声明）；负样本仅 15 条，上界单点（见 RQ2 敏感性）
+
 ## 局限声明（先读）
 - 词面泄漏：查询由 agent 读笔记构造，带笔记特有词，BM25 层指标偏乐观；真实用户查询更口语化
 - 负样本 15 条：拦截阈值上界（0.015）为小样本单点估计，扩充后可能移动
