@@ -283,7 +283,7 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("3. **拦截线定得稳吗**——阈值 0.02 是拍脑袋还是经得起调整")
     L.append("4. **语义相关吗**——字面看不出的相关性，让 DeepSeek 当裁判\n")
     L.append("## 结果\n")
-    L.append("### 1. 找得准吗 → 大多数能找对，缩写类问题偏弱\n")
+    L.append("### 1. 找得准吗 → 大多数能找对，缩写类问题偏弱（严格尺·字面命中）\n")
     L.append("| 问题类型 | 是什么 | 找对比例 | 评价 |")
     L.append("|---|---|---|---|")
     L.append(f"| 单篇问题 | 一个问题、一篇文章就能答 | {sh_hit}/{sh['queries']}（{sh_hit/sh['queries']:.0%}） | 多数直接命中 |")
@@ -298,7 +298,7 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("这个数是这么定的：无关问题的检索分数最高只到 0.0146，0.02 在它上面留了 0.005 余量。")
     L.append("调低到 0.01：会放过 2 个无关问题（不可接受）；调高到 0.05：只多拦 1 个有答案的问题（收益很小）。")
     L.append("所以 **0.02 在这批测试数据下是最优的**。但它依赖这批数据——换个知识库、换一批测试问题，这个数要重新算。这是绝对分数阈值的固有弱点，如实记录。\n")
-    L.append("### 4. 语义相关吗 → 很强\n")
+    L.append("### 4. 语义相关吗 → 很强（宽松尺·语义判定）\n")
     L.append("让 DeepSeek 当裁判，读检索结果和标准答案，判两件事：")
     L.append("- **答案覆盖度**（检索到的笔记是否覆盖答案要点）：**97%**（0.970）——几乎全覆盖")
     L.append("- **排序质量**（相关笔记是否排前面）：**86%**（0.855）")
@@ -315,7 +315,7 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("- 裁判是 DeepSeek，有模型偏见；12/75 次裁判调用失败（已跳过，如实记录）")
     L.append("- 只测了 llm-wiki 这一个知识库，换库结论可能不同\n")
     L.append("## 附录：原始数据\n")
-    L.append("### 检索命中（3 次运行，每次相同）")
+    L.append("### 检索命中（严格尺·字面命中；3 次运行，每次相同）")
     L.append("| 类型 | n | 命中@1（hit@1） | 前 5 条覆盖期望的比例（Recall@5） | 完全命中 |")
     L.append("|---|---|---|---|---|")
     for t, label in (("single-hop", "单篇"), ("multi-hop", "跨篇"), ("abbreviation", "缩写")):
@@ -327,7 +327,7 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("|---|---|---|")
     for row in sens:
         L.append(f"| {row['threshold']:.3f} | {row['pos_miss']}/{row['pos_total']} | {row['neg_fp']}/{row['neg_total']} |")
-    L.append("\n### 语义判定（DeepEval，DeepSeek 裁判）")
+    L.append("\n### 语义判定（宽松尺·语义判定，DeepEval，DeepSeek 裁判）")
     if judge_out:
         for name, v in judge_out.items():
             if name.startswith("_"):
