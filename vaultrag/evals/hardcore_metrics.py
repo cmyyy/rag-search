@@ -11,8 +11,8 @@
 """
 import sys, re
 sys.path.insert(0, r"D:\AI\hermes-agent")
-sys.path.insert(0, r"D:\AI\hermes-agent\plugins\context_engine")
-sys.path.insert(0, r"D:\AI\hermes-agent\plugins\context_engine\vaultrag")
+sys.path.insert(0, r"D:\AI\hermes-agent\plugins\rag-search")
+sys.path.insert(0, r"D:\AI\hermes-agent\plugins\rag-search\vaultrag")
 from dotenv import load_dotenv
 load_dotenv(r"D:\AI\hermes-agent\.env", override=True)
 
