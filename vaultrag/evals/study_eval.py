@@ -147,32 +147,59 @@ from deepeval.models.base_model import DeepEvalBaseLLM
 
 
 class DeepSeekLLM(DeepEvalBaseLLM):
-    """DeepSeek 作 DeepEval judge（OpenAI 兼容）。"""
+    """DeepSeek 作 DeepEval judge（OpenAI 兼容）。
 
-    def __init__(self, model: str = "deepseek-chat"):
+    根因（2026-08-27 实测确认）：DeepSeek V4 **默认开启 thinking 模式**
+    （extra_body 未设时），长提示下模型先深度思考（reasoning_content 可达
+    1.1 万字符），最终 content 为空字符串 → DeepEval 拿空串 → invalid JSON。
+    修复：extra_body={"thinking": {"type": "disabled"}} 显式关闭（官方文档
+    api-docs.deepseek.com/guides/thinking_mode，OpenAI SDK 必须放 extra_body）。
+
+    模型名用官方名 deepseek-v4-flash（定价页三模型之一；deepseek-chat 是
+    V3 时代别名，现已路由到 v4-flash，勿用）。可用 DEEPSEEK_JUDGE_MODEL 覆盖。
+    """
+
+    def __init__(self, model: str = ""):
         from openai import OpenAI
 
-        self._model = model
+        self._model = model or os.environ.get("DEEPSEEK_JUDGE_MODEL", "deepseek-v4-flash")
+        # timeout=60：长提示下模型可能响应慢，挂起由重试兜底（openai 默认 600s 会卡死评测）
         self.client = OpenAI(
             api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
             base_url="https://api.deepseek.com/v1",
+            timeout=60.0,
         )
 
     def load_model(self):
         return self.client
 
     def generate(self, prompt: str, **kwargs) -> str:
-        """调 DeepSeek。强制 json_object 输出（DeepEval judge 需要严格 JSON），
-        若 DeepSeek 因提示不含 json 字样拒绝 → 回退普通模式重试。"""
+        """调 DeepSeek。API 错误重试 3 次（指数退避），强制 json_object 输出
+        （DeepEval judge 需要严格 JSON），提示不含 json 字样时回退普通模式。"""
+        import time as _t
+
+        last_err = None
+        for attempt in range(3):
+            try:
+                r = self.client.chat.completions.create(
+                    model=self._model, messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0, max_tokens=8192,
+                    response_format={"type": "json_object"},
+                    extra_body={"thinking": {"type": "disabled"}}, **kwargs)
+                return r.choices[0].message.content
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    _t.sleep(1.5 * (attempt + 1))
+        # 重试耗尽：回退普通模式（DeepSeek 因提示无 json 字样拒绝 json_object 的场景）
         try:
             r = self.client.chat.completions.create(
                 model=self._model, messages=[{"role": "user", "content": prompt}],
-                temperature=0.0, response_format={"type": "json_object"}, **kwargs)
+                temperature=0.0, max_tokens=8192,
+                extra_body={"thinking": {"type": "disabled"}}, **kwargs)
+            return r.choices[0].message.content
         except Exception:
-            r = self.client.chat.completions.create(
-                model=self._model, messages=[{"role": "user", "content": prompt}],
-                temperature=0.0, **kwargs)
-        return r.choices[0].message.content
+            raise last_err
 
     async def a_generate(self, prompt: str, **kwargs) -> str:
         return self.generate(prompt, **kwargs)
@@ -230,13 +257,34 @@ def judge_semantic(engine, queries, results_last):
                        error_config=ErrorConfig(ignore_errors=True, skip_on_missing_params=True))
     out = {}
     failures = 0
-    for tc in results.test_results:
+    failed_idx = []
+    for i, tc in enumerate(results.test_results):
         for m in tc.metrics_data or []:
             if m.error:
-                failures += 1
+                failed_idx.append(i)
+                continue
             if m.score is None:
                 continue
             out.setdefault(m.name, []).append(m.score)
+
+    # 第二轮：失败 case 重试 1 次（JSON 解析类失败多为偶发，重试可救回大半；2026-08-27）
+    if failed_idx:
+        retry_cases = [test_cases[i] for i in failed_idx]
+        metric_prec2 = ContextualPrecisionMetric(threshold=0.5, model=judge, verbose_mode=False)
+        metric_rec2 = ContextualRecallMetric(threshold=0.5, model=judge, verbose_mode=False)
+        try:
+            results2 = evaluate(test_cases=retry_cases, metrics=[metric_prec2, metric_rec2],
+                                async_config=AsyncConfig(run_async=False),
+                                error_config=ErrorConfig(ignore_errors=True, skip_on_missing_params=True))
+            for tc in results2.test_results:
+                for m in tc.metrics_data or []:
+                    if m.error or m.score is None:
+                        failures += 1
+                        continue
+                    out.setdefault(m.name, []).append(m.score)
+        except Exception as e:
+            logger.warning("judge retry round failed: %s", e)
+            failures += len(failed_idx)
     result = {k: {"n": len(v), "mean": statistics.mean(v), "std": statistics.stdev(v) if len(v) > 1 else 0.0}
               for k, v in out.items()}
     if failures:

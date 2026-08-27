@@ -45,7 +45,7 @@ RAG_SEARCH_SCHEMA: Dict[str, Any] = {
     "properties": {
         "query": {
             "type": "string",
-            "description": "检索问题或关键词（自然语言；会做缩写展开与查询增强）",
+            "description": "检索问题或关键词（自然语言）",
         },
         "top_k": {
             "type": "integer",
