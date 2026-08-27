@@ -310,6 +310,69 @@ class VaultRAGEngine(ContextEngine):
         """
         return query
 
+    def search(self, query: str, top_k: int = _TOP_K) -> Optional[Dict[str, Any]]:
+        """统一检索入口——select_context 与 rag_search 工具共用（单一事实源）。
+
+        混合检索（BM25 + 向量 → RRF）→ 过滤 index 页 → guard 三档判定。
+        返回结构化结果（hits/verdict/top1_score/margin/reason），拦截或失败也返回
+        dict（verdict=incorrect/skipped + reason），None 仅限异常兜底（fail-open）。
+
+        2026-08-26 修正：rerank top_n=2——原 select_context 用 top_n=1 使 top2 恒为 0、
+        margin 恒等于 top1、margin 判定实际失效；工具 handler 却用真实 top2。
+        现统一 top_n=2，margin 真实生效，两路行为一致。
+        """
+        try:
+            if not self._index_ready:
+                self._index_ready = self.index.ensure_index()
+            if not self._index_ready:
+                return {"query": query, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "index-not-ready"}
+            q = (query or "").strip()
+            if not q:
+                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-query"}
+            if len(q) < _MIN_QUERY_CHARS:
+                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "length-gate"}
+            qv = self.embedding.embed_query(q)
+            if qv is None:
+                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "embedding-failed"}
+            candidates = self.index.hybrid_search(q, qv, top_k=_HYBRID_RECALL)
+            if not candidates:
+                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-candidates"}
+            # 过滤 index 页（MOC：关键词齐全但无答案 → rerank 误判高分）
+            pool = [c for c in candidates if Path(c["source"]).stem != "index"]
+            if not pool:
+                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-pool"}
+            hits = pool[:top_k]
+            # guard：rerank 打分（top_n=2 取真实 top2，margin 才有意义），失败退回 RRF 分数
+            guard_query = self._enhance_guard_query(q, pool)
+            cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool]
+            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=2)
+            if guard_scores:
+                top1 = float(guard_scores[0]["score"])
+                top2 = float(guard_scores[1]["score"]) if len(guard_scores) > 1 else 0.0
+            else:
+                top1 = float(hits[0]["score"]) if hits else 0.0
+                top2 = float(hits[1]["score"]) if len(hits) > 1 else 0.0
+            margin = top1 - top2
+            multi = self._is_multi_concept(q)
+            min_score = 0.15 if multi else _MIN_SCORE
+            amb_margin = 0.05 if multi else 0.15
+            if top1 < min_score:
+                return {"query": q, "hits": [], "verdict": "incorrect", "top1_score": top1,
+                        "top2_score": top2, "margin": margin, "multi_concept": multi,
+                        "reason": "score-below-threshold"}
+            verdict = "correct" if (top1 >= 0.40 and margin >= amb_margin) else "ambiguous"
+            return {"query": q, "hits": hits, "verdict": verdict, "top1_score": top1,
+                    "top2_score": top2, "margin": margin, "multi_concept": multi, "reason": "ok"}
+        except Exception as e:
+            logger.warning("[vaultrag] search failed, fail-open: %s", e)
+            return None
+
     def select_context(self, request_messages, *, conversation_messages=None, incoming_message=None, budget_tokens=0):
         """检索 vault，把命中片段注入请求。返回新消息列表；失败返回 None（fail-open）。"""
         # 结构化 trace（RAGOps，2026-08-19）：每次调用记一条完整决策链，
@@ -351,104 +414,32 @@ class VaultRAGEngine(ContextEngine):
                 return None
             trace["length_gate_pass"] = True
 
-            # 3. 混合检索（向量 + BM25 → RRF 融合）→ 召回 top-16
-            qv = self.embedding.embed_query(query)
-            if qv is None:
-                trace["reason"] = "embedding-failed"
-                self._emit_trace(trace)
-                return None
-            candidates = self.index.hybrid_search(query, qv, top_k=_HYBRID_RECALL)
-            trace["recalled"] = len(candidates)
-            if not candidates:
-                trace["reason"] = "no-candidates"
+            # 3. 统一检索（单一事实源：select_context 与 rag_search 工具共用 search；
+            #    混合检索/过滤/guard 判定全部在 search 内，杜绝双份代码漂移，2026-08-26）
+            result = self.search(query, top_k=_TOP_K)
+            if result is None:
+                trace["reason"] = "exception"
                 self._emit_trace(trace)
                 return None
 
-            # 3.3 双链图扩展已移除（2026-08-22 评测：收益有限，单跳反而降，
-            #     详见 evals/eval_report.md——双链扩展方向留 TODO 调参）
-            pool = candidates
+            hits = result["hits"]
+            top1 = result["top1_score"]
+            trace["recalled"] = len(hits)
+            trace["guard_top1_score"] = round(top1, 4)
+            trace["top1_top2_margin"] = round(result["margin"], 4)
+            if result["multi_concept"]:
+                trace["multi_concept"] = True
 
-            # 3.5 rerank 精排（cross-encoder）：对候选逐对细读打分，
-            #     分数比 embedding 相似度可靠得多（实测 0.63 vs 0.005）
-            # 场景适配 A：过滤目录/入口页（index 等自动生成的 MOC 页，
-            #     关键词齐全但无答案 → rerank 误判高分，2026-08-22 评测实测）
-            pool = [c for c in pool if Path(c["source"]).stem != "index"]
-            cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool]
-            # 3.5 排序：混合检索 RRF 融合结果直接取 top-N（2026-08-22 评测驱动：
-            #     cross-encoder rerank 在本场景（中文个人笔记库+面包屑长块）排序负优化
-            #     -24pp Hit@1——RRF 融合排序已够准，rerank 只用于 guard 分数判据）
-            hits = pool[:_TOP_K]
-            trace["rerank_top_scores"] = []  # 排序不再经过 rerank
-
-            # 3.5b guard 分数：单独调 rerank 取 top1 分数（仅判据，不排序）。
-            #     rerank 失败（fail-open）→ 退回 RRF top1 分数（约 0.0x-0.2，
-            #     阈值判据失效，用 margin 兜底）。RAGOps：guard 判定与排序解耦。
-            #
-            # 3.5c 查询侧增强（2026-08-23，query2doc EMNLP2023 思想落地）：
-            #     短查询/缩写查询（"HyDE 是什么"）cross-encoder 打分保守（0.12-0.27
-            #     < 0.30 被误拦，但 top1 就是正确笔记）。给 guard 的 rerank 喂
-            #     增强查询 q' = 展开查询 + 候选 top1 标题词（title 共现是强信号，
-            #     cross-encoder 词级交互，共享 token 越多分数越高）——
-            #     实测 AOP 0.121→0.271 / CRAG 0.125→0.224，分数自然过阈，不调阈值。
-            guard_query = self._enhance_guard_query(query, pool)
-            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=1)
-            if guard_scores:
-                guard_top1 = float(guard_scores[0]["score"])
-                guard_top2 = float(guard_scores[1]["score"]) if len(guard_scores) > 1 else 0.0
-            else:
-                # rerank 不可用：用 RRF 分数近似（量纲不同，仅 margin 兜底）
-                guard_top1 = float(hits[0]["score"]) if hits else 0.0
-                guard_top2 = float(hits[1]["score"]) if len(hits) > 1 else 0.0
-            trace["guard_top1_score"] = round(guard_top1, 4)
+            if result["verdict"] in ("incorrect", "skipped"):
+                trace["verdict"] = result["verdict"]
+                trace["reason"] = result["reason"]
+                self._emit_trace(trace)
+                return None
             if not hits:
                 trace["reason"] = "no-hits"
                 self._emit_trace(trace)
                 return None
-
-            # 3.6 CRAG 式三档评估（guard 分数来自 rerank top1，与排序解耦）：
-            #     场景适配 B：阈值自适应——rerank 分数跨查询不可比（同 0.89 有的对
-            #     有的错，2026-08-22 评测实测），用 top1-top2 差值判定更稳：
-            #     top1 ≥ 0.40 且领先 top2 ≥ 0.15 → Correct；≥0.30 → Ambiguous；否则 Incorrect
-            top1 = guard_top1
-            top2_score = guard_top2
-            margin = top1 - top2_score
-            trace["top1_top2_margin"] = round(margin, 4)
-            # 3.6 阈值判定（2026-08-22 评测后结论）：
-            #   绝对阈值 0.30/0.40 对负样本 100% 正确拦截（15/15 误报 0），
-            #   是 guard 最大价值。少数正样本（短查询/跨风格文档）分数低被
-            #   保守拦截是工程取舍——RAG 宁可少注入不可错注入。
-            #   （曾尝试相对判据 top1>=0.02 放宽，实测是数据集拟合，已撤回）
-            #
-            # 3.6b 多概念查询降级（2026-08-23，理论支撑：Adaptive RAG 查询复杂度
-            #   感知阈值——AMSRAG/MultiHop-RAG 均区分单跳/多跳查询处理）：
-            #   多概念查询（含比较标记"区别/对比/异同"+ 分隔符"和/与"）无任何
-            #   单块能覆盖整句 → rerank 单块分数系统性偏低（实测 0.12-0.29，
-            #   被 0.30 阈值误拦，但期望笔记全在 top8 已召回）。
-            #   命中多概念 → 阈值降为 0.15（仍拦截明显无关）。负样本为生活话题
-            #   无比较标记 → 不触发。这是"查询类型感知"，非全局分数拟合。
-            if self._is_multi_concept(query):
-                _min_score = 0.15
-                _ambiguous_margin = 0.05
-                trace["multi_concept"] = True
-            else:
-                _min_score = _MIN_SCORE
-                _ambiguous_margin = 0.15
-            # 判定：top1 低于最低阈值 → Incorrect 拦截。
-            # 0.40/0.15 margin 是旧设计的 Ambiguous 分界，与 0.02 最低阈值矛盾
-            # （0.02-0.40 的正样本会被 margin 挡）——2026-08-23 修正：
-            # margin 仅作"Ambiguous vs Correct"区分，不再作拦截条件。
-            if top1 < _min_score:
-                # Incorrect：vault 里没有相关内容 → 不注入
-                trace["verdict"] = "incorrect"
-                trace["reason"] = "score-below-threshold"
-                self._emit_trace(trace)
-                return None
-            if top1 >= 0.40 and margin >= _ambiguous_margin:
-                verdict = "correct"
-            else:
-                # Ambiguous：注入，但低置信——只记 logger/trace，
-                # 不塞进注入消息（严格 provider 拒未知字段）
-                verdict = "ambiguous"
+            verdict = result["verdict"]
 
             # 4. 拼注入消息（克隆消息列表，绝不修改原列表）
             injected = self._build_injection(hits)

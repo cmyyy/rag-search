@@ -1,0 +1,133 @@
+{
+ "meta": {
+  "ts": "2026-08-27 22:20:46",
+  "vault": "D:\\llmwiki\\llm-wiki",
+  "vault_fp": "81 files / 639362 bytes",
+  "n_queries": 100,
+  "runs": 3,
+  "deepeval": "4.1.8"
+ },
+ "stats": {
+  "single-hop": {
+   "queries": 36,
+   "hit1": [
+    26,
+    26,
+    26
+   ],
+   "recall5": [
+    31.0,
+    31.0,
+    31.0
+   ],
+   "full": [
+    31,
+    31,
+    31
+   ]
+  },
+  "multi-hop": {
+   "queries": 34,
+   "hit1": [
+    26,
+    26,
+    26
+   ],
+   "recall5": [
+    30.666666666666664,
+    30.666666666666664,
+    30.666666666666664
+   ],
+   "full": [
+    30,
+    30,
+    30
+   ]
+  },
+  "abbreviation": {
+   "queries": 15,
+   "hit1": [
+    6,
+    6,
+    6
+   ],
+   "recall5": [
+    9.5,
+    9.5,
+    9.5
+   ],
+   "full": [
+    10,
+    10,
+    10
+   ]
+  }
+ },
+ "neg": {
+  "fp": [
+   0,
+   0,
+   0
+  ],
+  "queries": 15
+ },
+ "sens": [
+  {
+   "threshold": 0.005,
+   "pos_miss": 6,
+   "pos_total": 85,
+   "neg_fp": 2,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.01,
+   "pos_miss": 8,
+   "pos_total": 85,
+   "neg_fp": 2,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.02,
+   "pos_miss": 10,
+   "pos_total": 85,
+   "neg_fp": 0,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.03,
+   "pos_miss": 11,
+   "pos_total": 85,
+   "neg_fp": 0,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.05,
+   "pos_miss": 11,
+   "pos_total": 85,
+   "neg_fp": 0,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.1,
+   "pos_miss": 14,
+   "pos_total": 85,
+   "neg_fp": 0,
+   "neg_total": 15
+  }
+ ],
+ "judge_out": {
+  "Contextual Precision": {
+   "n": 75,
+   "mean": 0.8551481481481481,
+   "std": 0.2597319349620879
+  },
+  "Contextual Recall": {
+   "n": 63,
+   "mean": 0.9702191987906273,
+   "std": 0.11120715411870025
+  },
+  "_judge_failures": {
+   "n": 12
+  }
+ }
+}

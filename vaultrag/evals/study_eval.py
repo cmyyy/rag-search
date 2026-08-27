@@ -310,7 +310,11 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("\n## RQ3 语义相关性（L4，DeepEval LLM-as-judge）\n")
     if judge_out:
         for name, v in judge_out.items():
+            if name.startswith("_"):
+                continue
             L.append(f"- {name}: mean={v['mean']:.3f}±{v['std']:.3f}（n={v['n']}）")
+        if "_judge_failures" in judge_out:
+            L.append(f"- judge 失败 case：{judge_out['_judge_failures']['n']}（ErrorConfig 跳过，如实记录）")
     else:
         L.append("- （无注入样本，未评测）")
 
@@ -342,12 +346,20 @@ def main():
         print(f"    负样本 top1 分数: min={min(neg_scores):.3f} med={statistics.median(neg_scores):.3f} max={max(neg_scores):.3f}")
 
     # L4：DeepEval（用最后一次结果）
-    try:
-        judge_out = judge_semantic(engine, queries, runs[-1])
-        print(f"  L4: {judge_out}")
-    except Exception as e:
-        print(f"  L4 失败: {e}")
-        judge_out = {}
+    if "--l4-cached" in sys.argv:
+        # 复用已验证的 judge 结果（检索输入不变：margin 修复不影响 hits 内容，仅 verdict 标注）
+        import json as _json
+
+        cache_path = _HERE / "l4_result.json"
+        judge_out = _json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+        print(f"  L4: 用缓存（{cache_path.name}）")
+    else:
+        try:
+            judge_out = judge_semantic(engine, queries, runs[-1])
+            print(f"  L4: {judge_out}")
+        except Exception as e:
+            print(f"  L4 失败: {e}")
+            judge_out = {}
 
     meta = {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -357,6 +369,10 @@ def main():
         "runs": 3,
         "deepeval": "4.1.8",
     }
+    # 中间结果落盘：报告生成失败可重生成，不必重跑评测（2026-08-26）
+    payload = {"meta": meta, "stats": stats, "neg": neg, "sens": sens, "judge_out": judge_out}
+    (_HERE / "study_result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
     report = write_report(meta, stats, neg, sens, judge_out, queries)
     REPORT_PATH.write_text(report, encoding="utf-8")
     print(f"报告已生成: {REPORT_PATH}")

@@ -1,7 +1,7 @@
 # rag-search 评测报告 v2（研究协议，2026-08-26）
 
 ## 版本头（可复现性）
-- 生成时间: 2026-08-27 13:22:48
+- 生成时间: 2026-08-27 22:20:46
 - vault: D:\llmwiki\llm-wiki（指纹 81 files / 639362 bytes）
 - 查询集: 100 条（4 类：single-hop 36 / multi-hop 34 / abbreviation 15 / negative 15），构造方法：子 agent 读 vault 笔记（lexical leakage 风险见局限）
 - 检索: bge-m3（embedding）+ bge-reranker-v2-m3（guard 判据）+ BM25，SiliconFlow 云端
@@ -57,18 +57,11 @@
 - 结论：0.02 在当前约束下是最优解，但属"悬崖左缘"——负样本集扩充/换库后上界可能移动，
   绝对阈值的固有脆弱性记录在案（若扩充后负样本上界变化，需重算或改相对判据）。
 
-## RQ3 语义相关性（L4，DeepEval LLM-as-judge，DeepSeek judge）
+## RQ3 语义相关性（L4，DeepEval LLM-as-judge）
 
-| 指标 | n | mean | std |
-|---|---|---|---|
-| Contextual Precision | 75 | 0.855 | 0.260 |
-| Contextual Recall | 63 | 0.970 | 0.111 |
-
-- judge：deepseek-chat（json_object 强制），75 个正样本 case
-- judge 失败 12/75（16%，JSON 解析/API 错误，ErrorConfig 跳过）——失败率如实记录；Recall 有效样本 63
-- 解读：Contextual Recall 0.97 说明**语义层面检索几乎全覆盖金标准**（远超字面 stem 匹配口径的 Recall@5 ~0.86-0.90——LLM 判定能识别"相关但不同笔记"）；
-  Contextual Precision 0.86 说明排序质量高（相关项靠前）
-- 局限：judge 为 DeepSeek 单模型，存在模型偏见；失败 case 未重试（保守报告）
+- Contextual Precision: mean=0.855±0.260（n=75）
+- Contextual Recall: mean=0.970±0.111（n=63）
+- judge 失败 case：12（ErrorConfig 跳过，如实记录）
 
 ## 附录：生产 guard verdict 分布（L2）
 
