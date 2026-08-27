@@ -12,7 +12,7 @@
   L4 语义评判：DeepEval ContextualPrecision / ContextualRecall（LLM-as-judge，DeepSeek）
 
 局限声明（诚实报告）：
-  - 查询集由子 agent 读 vault 笔记构造，存在词面泄漏风险（BM25 层指标偏乐观）
+  - 查询集由子 agent 读 vault 笔记构造，存在 lexical leakage（词面泄漏）风险（BM25 层指标偏乐观）
   - 负样本仅 15 条，拦截阈值上界估计统计意义有限
   - judge 为 DeepSeek，与 embedding 供应商不同，存在模型偏见可能
   - 单 vault 单库：结论外推需换库复现
@@ -262,11 +262,11 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("## 版本头（可复现性）")
     L.append(f"- 生成时间: {meta['ts']}")
     L.append(f"- vault: {meta['vault']}（指纹 {meta['vault_fp']}）")
-    L.append(f"- 查询集: {meta['n_queries']} 条（4 类：single-hop 36 / multi-hop 34 / abbreviation 15 / negative 15），构造方法：子 agent 读 vault 笔记（词面泄漏风险见局限）")
+    L.append(f"- 查询集: {meta['n_queries']} 条（4 类：single-hop 36 / multi-hop 34 / abbreviation 15 / negative 15），构造方法：子 agent 读 vault 笔记（lexical leakage 风险见局限）")
     L.append(f"- 检索: bge-m3（embedding）+ bge-reranker-v2-m3（guard 判据）+ BM25，SiliconFlow 云端")
     L.append(f"- 运行次数: {meta['runs']}（均值±std）| DeepEval {meta['deepeval']}，judge: DeepSeek\n")
     L.append("## 局限声明（先读）")
-    L.append("- 词面泄漏：查询由 agent 读笔记构造，带笔记特有词，BM25 层指标偏乐观；真实用户查询更口语化")
+    L.append("- lexical leakage（词面泄漏）：查询由 agent 读笔记构造，带笔记特有词，BM25 层指标偏乐观；真实用户查询更口语化")
     L.append("- 负样本 15 条：拦截阈值上界（0.015）为小样本单点估计，扩充后可能移动")
     L.append("- judge 偏见：DeepSeek 作 judge 与检索模型供应商不同，分数存在模型偏见")
     L.append("- 单库单模型：结论外推需换库/换模型复现\n")

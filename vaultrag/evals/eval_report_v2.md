@@ -3,12 +3,12 @@
 ## 版本头（可复现性）
 - 生成时间: 2026-08-27 13:22:48
 - vault: D:\llmwiki\llm-wiki（指纹 81 files / 639362 bytes）
-- 查询集: 100 条（4 类：single-hop 36 / multi-hop 34 / abbreviation 15 / negative 15），构造方法：子 agent 读 vault 笔记（词面泄漏风险见局限）
+- 查询集: 100 条（4 类：single-hop 36 / multi-hop 34 / abbreviation 15 / negative 15），构造方法：子 agent 读 vault 笔记（lexical leakage 风险见局限）
 - 检索: bge-m3（embedding）+ bge-reranker-v2-m3（guard 判据）+ BM25，SiliconFlow 云端
 - 运行次数: 3（均值±std）| DeepEval 4.1.8，judge: DeepSeek
 
 ## 局限声明（先读）
-- 词面泄漏：查询由 agent 读笔记构造，带笔记特有词，BM25 层指标偏乐观；真实用户查询更口语化
+- lexical leakage（词面泄漏）：查询由 agent 读笔记构造，带笔记特有词，BM25 层指标偏乐观；真实用户查询更口语化
 - 负样本 15 条：拦截阈值上界（0.015）为小样本单点估计，扩充后可能移动
 - judge 偏见：DeepSeek 作 judge 与检索模型供应商不同，分数存在模型偏见
 - 单库单模型：结论外推需换库/换模型复现
