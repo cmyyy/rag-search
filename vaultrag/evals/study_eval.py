@@ -229,6 +229,13 @@ def judge_semantic(engine, queries, results_last):
     metric_prec = ContextualPrecisionMetric(threshold=0.5, model=judge, verbose_mode=False)
     metric_rec = ContextualRecallMetric(threshold=0.5, model=judge, verbose_mode=False)
 
+    # 金标准答案（C 方案 2026-08-27：AI 基于笔记生成的简洁答案，替代笔记片段）
+    # answers.json 由 gen_answers.py 生成（85 条正样本）
+    _answers = {}
+    _ans_path = _HERE / "answers.json"
+    if _ans_path.exists():
+        _answers = json.loads(_ans_path.read_text(encoding="utf-8"))
+
     test_cases = []
     for q in queries:
         if q["type"] == "negative":
@@ -243,11 +250,13 @@ def judge_semantic(engine, queries, results_last):
             ctx.append(txt)
         if not ctx:
             continue
-        exp = expected_text(engine.vault_root, q["expected_notes"][0], limit=800)
+        ans = _answers.get(q["id"], {}).get("answer", "")
+        if not ans:
+            continue  # 无答案标注不评（如实少算 n）
         test_cases.append(LLMTestCase(
             input=q["query"],
             actual_output=ctx[0][:300],
-            expected_output=exp,
+            expected_output=ans,
             retrieval_context=ctx,
         ))
     if not test_cases:
@@ -311,17 +320,19 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     neg_fp = neg["fp"][0]
 
     L.append("# rag-search 检索质量评测报告\n")
-    L.append(f"生成时间：{meta['ts']} ｜ 知识库：llm-wiki（81 篇笔记）｜ 测试集：100 条 golden cases\n")
+    L.append(f"生成时间：{meta['ts']} ｜ 知识库：llm-wiki（81 篇笔记）｜ 测试集：{meta['n_queries']} 条 golden cases\n")
     L.append("## 一句话结论\n")
+    rec_mean = judge_out.get("Contextual Recall", {}).get("mean", 0.0) if judge_out else 0.0
+    prec_mean = judge_out.get("Contextual Precision", {}).get("mean", 0.0) if judge_out else 0.0
     L.append(f"- **找得准**（严格尺·字面命中）：单篇问题命中 {sh_hit}/{sh['queries']}（{sh_hit/sh['queries']:.0%}），跨篇问题完整覆盖 {mh_full}/{mh['queries']}（{mh_full/mh['queries']:.0%}）")
-    L.append("- **拦得对**：15 个无关问题全部拦住（0 误放）")
-    L.append("- **语义相关性强**（宽松尺·语义判定）：检索结果覆盖标准答案要点 97%（DeepSeek 裁判）")
+    L.append(f"- **拦得对**：15 个无关问题全部拦住（0 误放）")
+    L.append(f"- **语义相关性强**（宽松尺·语义判定）：检索结果覆盖标准答案要点 {rec_mean:.0%}（DeepSeek 裁判）")
     L.append(f"- **短板**：缩写类问题字面命中只有 {ab_hit}/{ab['queries']}（{ab_hit/ab['queries']:.0%}）——待改进\n")
     L.append("## 先懂两把尺子（为什么数字不一样）\n")
     L.append("报告里有两种数字，**测的东西不同，不能互相比较**：\n")
     L.append("- **严格尺（字面命中）**：返回的笔记必须是标准答案指定的那一篇（按文件名匹配）。要求高，查的是\"找没找对指定的文章\"。")
     L.append("- **宽松尺（语义判定）**：检索到的内容覆盖了答案要点就算相关（让 LLM 裁判）。要求宽，查的是\"找没找到能回答问题的内容\"。\n")
-    L.append("举例：问\"TTS 是什么\"——严格尺要求返回指定那篇笔记（只有 40% 做到）；宽松尺只要返回的内容里讲了 TTS 就算（97% 做到了）。两把尺子一严一宽，数字不一样是正常的，不是矛盾。\n")
+    L.append(f"举例：问\"TTS 是什么\"——严格尺要求返回指定那篇笔记（只有 {ab_hit/ab['queries']:.0%} 做到）；宽松尺只要返回的内容里讲了 TTS 就算（{rec_mean:.0%} 做到了）。两把尺子一严一宽，数字不一样是正常的，不是矛盾。\n")
     L.append("## 测的是什么（30 秒版）\n")
     L.append("被测对象是 **rag_search 工具**——agent 在个人知识库（笔记库）里找答案的工具。它做的事：把问题变成检索（关键词 + 语义），找到相关笔记，再由一个质量守卫（guard）判断\"这次检索靠不靠谱\"，靠谱才把笔记交给 agent。\n")
     L.append("**怎么测**：准备 100 个「问题 + 标准答案」测试对（golden cases），逐条让 rag_search 真实跑一遍，看它返回的笔记对不对。\n")
@@ -347,12 +358,13 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("调低到 0.01：会放过 2 个无关问题（不可接受）；调高到 0.05：只多拦 1 个有答案的问题（收益很小）。")
     L.append("所以 **0.02 在这批测试数据下是最优的**。但它依赖这批数据——换个知识库、换一批测试问题，这个数要重新算。这是绝对分数阈值的固有弱点，如实记录。\n")
     L.append("### 4. 语义相关吗 → 很强（宽松尺·语义判定）\n")
-    L.append("让 DeepSeek 当裁判，读检索结果和标准答案，判两件事：")
-    L.append("- **答案覆盖度**（检索到的笔记是否覆盖答案要点）：**97%**（0.970）——几乎全覆盖")
-    L.append("- **排序质量**（相关笔记是否排前面）：**86%**（0.855）")
+    L.append(f"让 DeepSeek 当裁判，读检索结果和标准答案，判两件事：")
+    L.append(f"- **答案覆盖度**（检索到的笔记是否覆盖答案要点）：**{rec_mean:.0%}**（{rec_mean:.3f}）——几乎全覆盖")
+    L.append(f"- **排序质量**（相关笔记是否排前面）：**{prec_mean:.0%}**（{prec_mean:.3f}）")
     L.append("字面匹配（看文件名）看不见\"相关但不同笔记\"，语义裁判看得见——字面指标会低估真实检索质量。\n")
     L.append("## 方法（怎么测的，可复现）\n")
-    L.append("- 测试数据：100 条 golden cases（单篇 36 / 跨篇 34 / 缩写 15 / 无关 15），AI 读笔记生成，标准答案经校验真实存在")
+    n_neg = neg["queries"]
+    L.append(f"- 测试数据：{meta['n_queries']} 条 golden cases（单篇 {sh['queries']} / 跨篇 {mh['queries']} / 缩写 {ab['queries']} / 无关 {n_neg}），AI 读笔记生成问题，标准答案经校验真实存在")
     L.append("- 被测路径：rag_search 真实链路（关键词 + 语义检索 → 排序 → 守卫判定 → 返回），不是测试代码的简化版")
     L.append("- 指标四层：字面命中（找对多少）、守卫拦截（拦对多少）、阈值敏感性（0.02 稳不稳）、语义判定（DeepSeek 裁判）")
     L.append("- 复现：`python evals/study_eval.py`（3 次运行约 10 分钟）；中间结果 study_result.json；逐条检索决策 trace.jsonl 可审计")
@@ -360,7 +372,8 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("## 局限（诚实声明）\n")
     L.append("- 测试问题由 AI 生成，可能带笔记里的原文词（lexical leakage）——真实用户问法更口语化，检索指标可能偏乐观")
     L.append("- 无关问题只有 15 条，拦截线的数据依据偏薄")
-    L.append("- 裁判是 DeepSeek，有模型偏见；12/75 次裁判调用失败（已跳过，如实记录）")
+    jf = (judge_out or {}).get("_judge_failures", {}).get("n", 0)
+    L.append(f"- 裁判是 DeepSeek，有模型偏见；{jf} 次裁判调用失败（已跳过，如实记录）")
     L.append("- 只测了 llm-wiki 这一个知识库，换库结论可能不同\n")
     L.append("## 附录：原始数据\n")
     L.append("### 检索命中（严格尺·字面命中；3 次运行，每次相同）")

@@ -1,0 +1,314 @@
+{
+ "sh-01": {
+  "query": "MoA 是什么",
+  "answer": "MoA（Mixture of Agents）是多智能体混合技术，让多个参考模型分别回答同一问题，再由一个聚合模型综合所有答案给出最终结果。参考模型如 gpt-5.5、deepseek-v4-pro 各答一遍，聚合模型如 claude-opus-4.8 综合出最优回答。它比单一模型更稳定、答案更全面，但代价是速度慢、token 消耗翻倍。注意 MoA 与 MoE 不同，MoA 是应用层多个独立 LLM 的组合，MoE 是单个模型内部的专家网络稀疏激活。"
+ },
+ "sh-02": {
+  "query": "RRF 融合原理",
+  "answer": "RRF（倒数排名融合）将多个检索结果的排名融合成一个，公式为 Σ 1/(rank + k)，其中 k=60。它不关心绝对分数，只看排名，因为 BM25 和向量分数的量纲不同，不能直接加权。每个文档在 BM25 排名和向量排名里各算一次倒数，相加后排序。该方法的出处是滑铁卢大学和 Google 在 2019 年提出的。"
+ },
+ "sh-03": {
+  "query": "cross-encoder 是什么",
+  "answer": "Cross-encoder 是一种精排模型，将查询和文档拼接成一段文本输入 Transformer，通过交叉注意力机制让两者深度交互，最终输出一个 0 到 1 的相关度分数。它用于对粗召回的一批候选文档重新打分排序，挑出最相关的几条。相比 bi-encoder（向量相似度），cross-encoder 精度更高但速度更慢，因此 RAG 系统通常采用两阶段策略：先用 bi-encoder 全量粗召回，再用 cross-encoder 对少量候选精排。"
+ },
+ "sh-04": {
+  "query": "vaultrag 的 fail-open 是什么意思",
+  "answer": "fail-open 指检索管线任何环节失败时，直接返回 None 并原样放行用户请求，不中断对话。其核心原则是检索失败绝不能影响对话，宁可不注入检索结果，也不让系统崩溃。该设计确保即使检索出错，对话仍能正常继续。"
+ },
+ "sh-05": {
+  "query": "Hermes 消息规范化做了什么",
+  "answer": "Hermes 消息规范化将每个工具调用的 arguments 参数重排成标准字节格式，通过 json.loads 解析后，再用紧凑分隔符和键排序重新序列化，确保同一 JSON 无论经过多少次序列化，字节完全一致。这保证了 KV cache 前缀稳定，避免因键序或空格差异导致缓存失效。异常时调用修复函数处理畸形参数。"
+ },
+ "sh-07": {
+  "query": "查询改写有哪三种策略",
+  "answer": "查询改写有三种策略：多查询拆分（Multi-Query）、查询扩展（Query Expansion）和假设性文档嵌入（HyDE）。多查询拆分将一个问题拆成3-5个子查询分别检索并合并去重，适用于复合或多角度问题；查询扩展通过添加同义词或相关词来应对词汇不匹配；HyDE先生成假设答案再用其检索，适合模糊查询。"
+ },
+ "sh-08": {
+  "query": "Causal Coupling guard 解决的是什么问题",
+  "answer": "Causal Coupling guard 解决的是切分点拆散 assistant tool_calls 与 tool 结果配对的问题。若拆散，摘要器会把已完成任务误判为“没回答”，导致下回合模型重做一遍。修复方式是检测到拆对时，将切分点推到回合末尾，整对一起压缩。"
+ },
+ "sh-09": {
+  "query": "in_place 压缩和 rotation 压缩的区别",
+  "answer": "in_place 压缩和 rotation 压缩是 Hermes 处理上下文超窗的两种模式。Rotation 是旧模式，压缩后会更换新的 session_id，旧会话归档，新会话继续，但会引发会话链断裂、网关误判、命名重编号、锁失效等问题。In-place 压缩（默认模式）则保持 session_id 不变，在同一会话内软归档历史并插入摘要，仅通过额外信号（如 `_last_compaction_in_place`）告知网关压缩发生，避免上述弊端。"
+ },
+ "sh-10": {
+  "query": "Hermes 每回合开头为什么要清空压缩状态？gateway 跨回合复用同一个 agent 对象会带来什么 bug？",
+  "answer": "每回合开头清空压缩状态，是因为 gateway 会跨回合复用同一个 agent 对象，而压缩状态是 per-turn 的，必须归零。若不重置，上一回合的压缩信号会残留，导致 gateway 误判当前回合发生了压缩或分流，进而错误重置 transcript 处理。具体 bug 是：残留的 `_last_compaction_in_place` 等标志会让新回合的会话处理逻辑基于过期信息行动，造成状态错乱。"
+ },
+ "sh-11": {
+  "query": "MoA 回合发聚合请求前，参考模型们的回答是怎么汇总并塞进请求里的？",
+  "answer": "MoA 回合在发聚合请求前，先让所有参考模型并行各回答一遍用户问题，然后将每个模型的回答按“Reference 序号 — 模型名：回答内容”的格式汇总成一段文本。这段汇总文本会被拼接到最后一条用户消息的末尾（纯文本直接追加，多模态则新增一个 text 块）。聚合模型随后带着“用户原始问题 + 参考答案”一起生成最终回答。若某个参考模型失败，会按降级策略生成说明并同样拼入汇总。"
+ },
+ "sh-12": {
+  "query": "模型看到的工具菜单不是全量发的，工具 schema 从注册到变成 tools 参数要经过哪几步？",
+  "answer": "工具 schema 从注册到变成 tools 参数要经过三步：第一步注册，在工具文件末尾调用 registry.register，将手写 schema 与 handler、check_fn 配对存入登记簿；第二步收集，get_tool_definitions() 按启用的 toolset 过滤，取出对应工具的 schema 列表；第三步发送，将 schema 列表原样放入 API 请求的 tools 参数。另外，check_fn 会控制暴露，依赖未安装的工具 schema 不会出现在请求中。"
+ },
+ "sh-13": {
+  "query": "为什么要把工具调用的 arguments 重新序列化成键排序、紧凑的 JSON？这对缓存命中有什么用？",
+  "answer": "工具调用的 arguments 会被重排成键排序、紧凑的 JSON，因为 JSON 的语义相同但字节可能不同，而 KV cache 按字节匹配。若不统一格式，模型每次生成的键序或空格差异会导致前缀漂移，使缓存失效。通过解析后重排，同一 JSON 无论来源如何，字节完全一致，从而保证缓存前缀稳定，提升命中率。"
+ },
+ "sh-14": {
+  "query": "/steer 和 interrupt 到底有什么区别？为什么 steer 不新插一条 user 消息而是把纸条贴在工具结果末尾？",
+  "answer": "/steer 和 interrupt 的核心区别在于：interrupt 会立即取消当前工具批并设置中断标志，而 steer 不设中断标志，等待当前工具批自然执行完，再在下一轮迭代中让模型看到提示。steer 不新插 user 消息，是因为这会破坏消息角色交替（tool 和 user 之间不能插入），严格 provider 会拒绝；它选择把纸条追加到现有 tool 消息的 content 末尾，角色不变，内容多几个字，角色交替完好。这样模型在下一轮 API 调用时，能从工具结果末尾的提示中自动调整方向。"
+ },
+ "sh-15": {
+  "query": "认证池 credential pool 是干嘛的？同一 provider 配了多套 key 是怎么轮着用的？",
+  "answer": "认证池是同一 provider 多套 API key 或 OAuth token 的集合，按优先级排队并自动轮换使用，解决单 key 限流或额度耗尽的问题。池内凭据按 priority 排序，select() 选当前可用凭据，mark_exhausted_and_rotate() 在限流或超额度时标记冷却并换下一个，try_refresh_current() 刷新过期凭据。同一 provider 配多套 key 时，轮换逻辑由 pool strategy 控制，不同 provider 策略可不同，核心是优先选高优先级且未冷却的凭据，打爆后进入冷却期，冷却期内不参与选择，直到轮换到下一个可用凭据。"
+ },
+ "sh-16": {
+  "query": "prefill messages 是干什么用的？插在消息的什么位置，会不会被存进数据库？",
+  "answer": "prefill messages 是预先插入对话历史的“示范消息”（few-shot 示例），用于给模型展示回答格式或风格。它们被插入在 system prompt 之后、真实历史之前，位置紧跟系统消息。这些消息是临时的，仅在 API 调用时存在，绝不会被存进数据库或会话历史中。"
+ },
+ "sh-17": {
+  "query": "同一个过程旁白为什么会在一个回合里被重复推送？_delivered_interim_texts 这个集合是怎么去重的？",
+  "answer": "同一个过程旁白会在一个回合内被重复推送，是因为模型在续写、工具调用前后可能多次产生相同的中间文本。`_delivered_interim_texts` 是一个集合，用于记录本回合内已经发送过的旁白文本，发送前会查重，发送后记录，从而避免重复刷屏。该集合在每个回合开头被重置为空，确保去重只作用于当前回合，不会抑制下一回合的正常回答。"
+ },
+ "sh-18": {
+  "query": "RAG 里的 rerank 到底是个什么东西？它跟拿来算向量相似度的 embedding 模型有什么区别，为什么说它更准？",
+  "answer": "Rerank 是 RAG 检索的第二阶段“精排模型”，把查询和文档拼成一段文本输入 Transformer，输出相关度分数，用于对粗召回结果重新排序。它与 embedding 模型（bi-encoder）的核心区别在于：embedding 模型将查询和文档各自独立编码成向量，靠余弦相似度事后计算；而 rerank 模型让两者在编码时通过交叉注意力直接交互，因此判断更准。实测中，rerank 的区分度比 embedding 相似度强一个数量级，例如正确文档与无关文档的分数差距可达 125 倍。由于 rerank 无法预计算、速度慢，RAG 标准做法是先用 embedding 全量粗召回，再对少量候选集用 rerank 精排。"
+ },
+ "sh-19": {
+  "query": "主模型一直 429 限流，Hermes 会自动换一个备用 provider 吗？重试和 fallback 切换到底有什么区别？",
+  "answer": "主模型 429 限流时，Hermes 会立即切换备用 provider，因为限流窗口内重试必然再次失败。重试是同一家 provider 再来一次，可能伴随刷新凭据、压缩历史等修复动作；fallback 则是换一家 provider 重新开始，并清零重试计数。切换后备用 provider 获得全新的尝试机会，而非累加主 provider 的失败次数。"
+ },
+ "sh-21": {
+  "query": "OpenAI 兼容接口的 messages 里 role 都有哪些？为什么说消息必须按 user、assistant 交替排列？",
+  "answer": "OpenAI 兼容接口的 messages 中 role 有四种：system（系统提示词）、user（用户消息）、assistant（模型回复，含工具调用声明）、tool（工具执行结果）。消息必须按 user 和 assistant 交替排列，因为严格兼容的 provider 会校验序列，违规会导致请求被拒收或静默返回空内容。此外，assistant 声明 tool_calls 后必须紧跟对应的 tool 结果，tool 也不能凭空出现，否则模型会困惑并触发重试死循环。"
+ },
+ "sh-22": {
+  "query": "模型输出里出现 这种标签是怎么回事？Hermes 为什么要把它从正文里剥掉？",
+  "answer": "模型输出里出现 `<think>` 这类标签，是因为推理模型（如 DeepSeek-R1、QwQ）在生成正式回答前，会把思考过程作为输出的一部分，用 XML 标签包裹在 content 文本中。Hermes 必须把它从正文里剥掉，因为推理过程不面向用户——用户要的是最终答案，不是模型的内心独白。剥掉后还能用于判断模型是否“想了但没答”（只有推理块没有可见正文），以及避免流式中断时把推理存进历史导致模型下一回合误读。Hermes 对未闭合标签、孤立标签等异常情况也有容错处理，且只在块边界剥除，避免误伤正文中提到的标签散文。"
+ },
+ "sh-23": {
+  "query": ".gitignore 里写了 build/，结果把子目录 harness/build 也忽略了，怎么改成只忽略根目录的 build？",
+  "answer": "将 `.gitignore` 中的 `build/` 改为 `/build/`。以 `/` 开头的模式会锚定到仓库根目录，只有根目录下的 `build` 目录被忽略，而 `harness/build/` 不再受影响。修改后可用 `git check-ignore -v harness/build/` 验证，新写法不会命中该路径。"
+ },
+ "sh-24": {
+  "query": "Python 的协程和线程到底差在哪？为什么说协程切换成本低、并发上限高，但它又不是并行？",
+  "answer": "协程是能暂停、恢复并记住状态的函数，而线程由操作系统内核调度。协程切换在用户态完成，成本极低（约几百字节内存），线程切换需内核态，成本高（约1MB内存/线程），因此协程并发上限可达十万级，线程仅几千。但协程是协作式调度，单线程内同一时刻只有一个协程运行，只在`await`处主动让出，所以不是并行。线程是抢占式调度，由系统强制切换，可真正利用多核并行。协程适合I/O密集型高并发，但若在协程中写同步阻塞代码（如`time.sleep`），会卡死整个事件循环。"
+ },
+ "sh-33": {
+  "query": "Hermes 里一次工具调用的消息结构是什么样的？tool_calls 和 tool 结果消息是怎么配对的？",
+  "answer": "一次工具调用由两条消息配对组成：assistant 消息声明 `tool_calls`（每个含唯一 `id`、`function.name` 和 JSON 格式的 `arguments`），其后必须紧跟一条 `role=\"tool\"` 的结果消息，其 `tool_call_id` 指向该 `id`。配对要求一一对应、顺序相邻，不能有“有调用没结果”或“有结果没调用”的孤儿消息，且 `function.name` 不能为空。多工具调用时，assistant 可同时声明多个 `tool_calls`，随后依次排列对应 `tool_call_id` 的结果消息，顺序无关紧要，靠 id 配对即可。"
+ },
+ "sh-35": {
+  "query": "prompt cache 的前缀稳定性为什么重要？Hermes 注入上下文时怎么保证不破坏缓存前缀？",
+  "answer": "前缀稳定性直接决定 LLM API 的缓存命中率，命中时前缀 token 按约 1/10 价格计费且响应更快，失效则全价重算，长会话中命中率 0% 与 90% 的成本差一个数量级。任何前缀字节变化（如注入记忆、多余空格、JSON 顺序漂移）都会使变化点之后的缓存全部失效。Hermes 通过只向当前回合的 user 消息注入内容、注入仅进 API 副本而不污染存储、并用 api_content sidecar 原样保存和重放注入后的字节，确保历史前缀逐字稳定。同时 system prompt 每会话只建一次，消息统一 strip 首尾空白，tool_calls 用 sort_keys 固定序列化顺序，且 cache_control 断点最后标记，避免后续规范化破坏字节一致性。"
+ },
+ "mh-02": {
+  "query": "Hermes 压缩和 prompt cache 前缀稳定性是什么关系",
+  "answer": "Hermes 压缩与 prompt cache 前缀稳定性紧密相关：压缩操作若改变请求前缀的字节序列，会导致缓存从变化点起全部失效，使后续请求按全价重新计算。Hermes 通过确保压缩后的字节与重放时完全一致（如 api_content sidecar 原样存储、注入仅进 API 副本），来维持前缀稳定，从而保障缓存命中率。压缩若破坏前缀的字节级匹配，会直接推高成本并降低响应速度。"
+ },
+ "mh-03": {
+  "query": "MoA 聚合上下文注入在 Hermes 里是怎么实现的",
+  "answer": "MoA 聚合上下文注入在 Hermes 中通过 `decode_moa_turn` 实现。前端只能发送文本，因此 `encode_moa_turn` 将 `{prompt, config}` 打包成带 `__HERMES_MOA_TURN_V1__` 前缀的 base64 隐藏文本，伪装成 user_message 进入 `run_conversation`。`run_conversation` 开头检测到 `moa_config` 参数为 None 时，尝试解码该文本：若带前缀则解出真实 prompt 和 config，否则原样返回。解码后，user_message 和持久化消息均还原为用户原话，防止 base64 乱码前缀进入数据库或 transcript。"
+ },
+ "mh-04": {
+  "query": "RRF 为什么比直接加权融合好，vaultrag 里是怎么用的",
+  "answer": "RRF 比直接加权融合好，是因为 BM25 和向量检索的分数量纲不同，直接加权不公平，而 RRF 只看排名，通过 `Σ 1/(rank + k)`（k=60）融合，避免量纲问题。在 vaultrag 中，混合检索先取向量和 BM25 各 top-48，经 RRF 融合后召回 top-16，再交给 cross-encoder 精排。"
+ },
+ "mh-05": {
+  "query": "cross-encoder 为什么比 bi-encoder 准，RAG 为什么用两阶段",
+  "answer": "Cross-encoder 比 bi-encoder 准，是因为它把 query 和 document 拼进同一个输入序列，通过交叉注意力让两者在编码时直接互相看到，做细粒度交互，从而更精准地判断相关度；而 bi-encoder 是各自独立编码成向量，靠余弦相似度事后计算，交互不足。RAG 采用两阶段是因为 bi-encoder 快但粗，可离线预存文档向量，适合全量粗召回；cross-encoder 准但慢，每个 query-doc 对都要实时跑一次模型，无法预计算，所以只对粗召回的小候选集（如 16 条）精排，兼顾速度与精度。"
+ },
+ "mh-06": {
+  "query": "context engine 和压缩机制有什么区别，vaultrag 属于哪一类",
+  "answer": "context engine 是主动选择机制，每次请求前由外部插件决定该给 AI 看什么上下文，可以增加内容（如检索注入）；压缩是被动应对机制，仅在历史超长时触发，只能减少内容（摘要或丢弃）。VaultRAG 属于 context engine 类别，因为它本质是知识库检索引擎，在每次提问时检索相关材料并注入请求。"
+ },
+ "mh-07": {
+  "query": "查询改写有哪几种策略，vaultrag 为什么当前没做",
+  "answer": "查询改写主要有三种策略：多查询拆分（把复合问题拆成多个子查询分别检索）、查询扩展（补充同义词和相关词）、以及 HyDE（先生成假设答案再用答案检索）。vaultrag 当前没做查询改写，是因为它的定位是个人知识库的精确问答，用户查询通常比较明确，直接原样进入 BM25 和向量检索即可。如果未来做生产级检索，这会成为第一优先级，但需通过分数阈值控制成本，只对复杂或模糊查询启用。"
+ },
+ "mh-08": {
+  "query": "Hermes 压缩 in_place 模式为什么需要 _last_compaction_in_place 信号",
+  "answer": "Hermes 压缩 in_place 模式需要 `_last_compaction_in_place` 信号，是因为 in-place 压缩后 session_id 不变，gateway 无法像 rotation 模式那样通过检测\"id 变了\"来感知压缩发生。该信号在压缩完成时写入，gateway 读取它来重置 transcript 处理，作为轮换无关的压缩信号。同时，gateway 会跨回合复用同一个 agent 对象，压缩状态是 per-turn 的，每回合开头必须重置，避免上一回合残留状态影响当前回合。"
+ },
+ "mh-10": {
+  "query": "prompt cache 前缀稳定性给 Hermes 注入类机制带来什么设计约束",
+  "answer": "前缀稳定性要求注入只能发生在当前回合的 user 消息中，历史消息必须逐字不动。注入内容只能进入 API 发送副本，不能污染持久化存储，且需通过 api_content sidecar 保证重放字节一致。任何注入点漂移都会导致后续整个 assistant/tool 链重新 prefill，缓存全部失效。因此 Hermes 将缓存视为神圣原则，禁止中间修改工具集、重载记忆或重建 system prompt，否则成本可能暴涨数倍。"
+ },
+ "mh-11": {
+  "query": "Hermes 为了保住 prompt cache 前缀稳定做了哪些事？消息规范化、api_messages 重放历史字节、cache_control 打标分别在哪一环起作用？",
+  "answer": "Hermes 通过消息规范化、api_messages 重放历史字节和 cache_control 打标三件事来保住 prompt cache 前缀稳定。消息规范化在出站消息生成时起作用，将每个工具调用的 arguments 重排成标准字节格式（紧凑分隔符加键排序），确保同一 JSON 字节完全一致。api_messages 重放历史字节在跨回合重放时起作用，保证历史消息字节与当时发送的一致，避免前缀漂移。cache_control 打标在请求构造时起作用，标记需要缓存的前缀部分，让 KV cache 按字节匹配时能命中稳定前缀。三者分别在生成、重放和缓存标记环节协同，共同维持前缀稳定。"
+ },
+ "mh-12": {
+  "query": "run_conversation 这个几千行的函数整体分哪几个阶段？请求组装阶段（B）主要做了什么？",
+  "answer": "run_conversation 整体分为六个阶段：A回合启动与迭代准备、B请求组装、C请求执行、D响应处理、E错误恢复、F工具执行与收尾。请求组装阶段（B）主要把要问的问题整理成标准格式，并检查是否会超字数限制。"
+ },
+ "mh-13": {
+  "query": "上下文压缩的 rotation 模式为什么被 in-place 取代？压缩状态每回合归零和发请求前的压力检查是怎么配合的？",
+  "answer": "Rotation 模式因换新 session_id 引入会话链断裂、网关误判、命名重编号、锁失效和 transcript 重写成本等一簇问题，故被 in-place 取代。in-place 在同一会话内软归档并插入摘要，仅需独立信号告知网关压缩发生。每回合开头将三个压缩标志归零，是因为网关跨回合复用同一 agent 对象，而压缩状态是 per-turn 的。归零后，发请求前通过压力检查触发压缩，并依据标志记录本次尝试类型，确保网关能准确感知压缩事件。"
+ },
+ "mh-14": {
+  "query": "发请求前的消息消毒会修哪两类脏数据？什么样的工具调用消息结构才算合法？",
+  "answer": "发请求前的消息消毒会修两类脏数据：一是工具调用的参数 JSON 损坏（如 arguments 为 None、空字符串或非法 JSON，会被改成 `\"{}\"` 并打损坏标记）；二是角色交替违规（如连续两条 assistant 合并、孤儿 tool 消息丢弃、连续两条 user 换行合并）。合法的工具调用消息结构要求 assistant 消息中的 tool_calls 参数必须是合法 JSON，且消息顺序需符合 user/assistant/tool 交替规则，每条 tool 消息的 tool_call_id 必须对应前面 assistant 的 tool_call。"
+ },
+ "mh-15": {
+  "query": "响应处理阶段 D 和错误恢复阶段 E 是什么关系？一个看响应内容一个看异常类型，它们怎么分工的？",
+  "answer": "响应处理阶段 D 负责验证模型响应是否有效，错误恢复阶段 E 则处理验证失败后的恢复流程。D 阶段先检查响应形状，若无效则标记并进入 E 阶段；E 阶段通过错误钩子、急切 fallback 和退避重试等机制尝试恢复。两者分工明确：D 负责\"验货\"，E 负责\"恢复\"，D 的验证结果直接决定是否触发 E 的恢复链。"
+ },
+ "mh-16": {
+  "query": "请求执行阶段的中层 retry 循环一直延伸到哪？模型说要调工具之后，响应归一化和工具执行是怎么衔接的？",
+  "answer": "中层 retry 循环（`while retry_count < max_retries:`）从请求执行阶段开始，一直延伸到错误恢复阶段（㊿+5），覆盖了单次 API 调用的重试与恢复逻辑。模型说要调工具之后，响应归一化和工具执行通过中间件和钩子衔接：先构建 API kwargs（含 fallback 换 provider 后的 reasoning 回显等），再经过 LLM 请求中间件改写请求，最后才真正调用 API。调用完成后，响应归一化处理结果，并触发后续的工具执行流程。整个过程中，限流守卫（如 Nous Portal）会在发请求前检查配额，避免无效重试。"
+ },
+ "mh-17": {
+  "query": "gateway 的钩子插件靠什么信号感知 agent 每步进度？step_callback 推送什么内容，skill nudge 又是怎么统计迭代次数的？",
+  "answer": "step_callback 通过 agent 主循环每轮迭代时主动调用回调函数来感知进度，信号就是“第几步 + 上一步用了哪些工具”。推送内容包含上一步的工具名、参数和执行结果清单。skill nudge 统计迭代次数时，依赖 step_callback 每轮触发一次的特性，每次回调即代表一次迭代完成，但若工具执行后被 guardrail 中断，最后一批工具会漏报，导致计数少一次。"
+ },
+ "mh-18": {
+  "query": "Hermes 的插件钩子能在发请求前改写发给 provider 的参数吗？api_kwargs 这个字典是怎么跟钩子配合的？",
+  "answer": "可以。`pre_api_request` 钩子会在发 API 请求前被调用，插件能在此改写发给 provider 的参数。`api_kwargs` 是传给该钩子的一个字典，包含请求参数（如消息、模型等），插件可直接修改这个字典，修改后的内容会随请求发出。该钩子常用于可观测性插件（如 langfuse）消费请求信息，但同样支持参数改写。"
+ },
+ "mh-19": {
+  "query": "vaultrag 检索时先混合检索再 rerank，这两步分别用的什么模型？为什么精排非要 cross-encoder 不可？",
+  "answer": "混合检索阶段使用BM25（词法检索）和bge-m3（向量检索）两种模型，分别取top-48结果后通过RRF融合得到16条候选。精排阶段使用cross-encoder模型对候选进行细粒度打分，最终取top-4。\n\n精排必须用cross-encoder是因为它能同时编码查询和文档，捕捉两者间的深层交互特征，比双塔式向量检索更精准。但cross-encoder计算成本高，所以只对粗召回的小候选集（16条）进行精排，而非全量文档，这是两阶段检索的标准设计。"
+ },
+ "mh-20": {
+  "query": "上下文超窗被压缩后，模型下一次加载会话看到的 live 集变成什么样了？摘要器在这个过程中干了什么？",
+  "answer": "压缩后，模型下一次加载会话时看到的 live 集由两部分组成：中间历史被替换成的摘要，以及尾部最近的消息。摘要器在这个过程中充当执行者，使用便宜的辅助模型将中间历史对话总结成摘要，替换原始消息，同时保留头部和尾部内容。"
+ },
+ "ab-02": {
+  "query": "CRAG 三档评估是什么",
+  "answer": "CRAG 三档评估是检索后对 top1 分数进行的判定：Correct（≥0.5）正常注入，Ambiguous（0.3~0.5）注入但低置信，Incorrect（<0.3）不注入。该评估复用 rerank 分数，零额外成本，基于 CRAG 思想简化实现，无 web 补偿。"
+ },
+ "ab-03": {
+  "query": "HyDE 是什么",
+  "answer": "HyDE（假设性文档嵌入）是查询改写的一种策略，做法是先用 LLM 生成一个“假设答案”，再用这个答案去检索，因为答案比问题更接近文档语义。它主要适用于模糊查询场景。"
+ },
+ "ab-05": {
+  "query": "MoA 是什么？它和 MoE 有什么区别？",
+  "answer": "MoA（Mixture of Agents）是让多个参考模型各自回答同一问题，再由一个聚合模型综合所有答案给出最终结果，相当于多模型开圆桌会议，效果更稳定全面，但代价是速度慢且 token 消耗翻倍。MoE（Mixture of Experts）则是单个模型内部的专家网络稀疏激活，用于节省算力，两者不在同一层级。MoA 是应用层多个独立 LLM 的组合，而 MoE 是模型内部的架构设计。"
+ },
+ "ab-06": {
+  "query": "KV cache 前缀稳定是什么意思？为什么要保证发出去的消息字节完全一致？",
+  "answer": "KV cache 前缀稳定指请求的开头部分字节完全一致时，provider 复用上次算好的 KV 缓存，只计算新增部分。前缀任何一处字节变化，从变化点往后全部失效，导致缓存未命中，按全价计费且响应更慢。Agent 每次调用都重发整个对话历史，前缀占请求 80-90%，缓存命中率直接决定成本和速度。保证发出去的消息字节完全一致，是为了确保前缀稳定，避免缓存失效，从而节省约 90% 的 token 费用并提升响应速度。"
+ },
+ "ab-07": {
+  "query": "cache_control 是什么？Anthropic 提示词缓存打标是怎么做的？",
+  "answer": "cache_control 是 Anthropic 提示词缓存中的显式断点标记，通过 `cache_control: {\"type\": \"ephemeral\"}` 告诉服务器缓存断点之前的内容。Hermes 在消息处理链的最后（源码 1546-1577 行）调用 `apply_anthropic_cache_control` 打标，会设置多个断点：静态 system 前缀、完整 system prompt 和最后两条消息。打标必须最后执行，因为它会把 content 从纯字符串改写成块结构，若提前运行会破坏字节稳定性。缓存实体存储在 Anthropic 云端（按 API key 隔离，TTL 5 分钟可续期到 1 小时），本地只负责保证前缀字节稳定，断点前内容命中后价格降至 0.1 倍、速度提升 2-5 倍。"
+ },
+ "ab-08": {
+  "query": "OAuth token 或 API key 被限流（429）时，认证池和错误恢复是怎么配合换凭据的？",
+  "answer": "当 OAuth token 或 API key 被限流（429）时，认证池会调用 `mark_exhausted_and_rotate()`，将该凭据标记为冷却状态并切换到下一个可用凭据。冷却期内的凭据不会被 `select()` 选中，直到冷却截止。如果所有凭据都被限流，池会按优先级和可用性轮换，避免单点失效。错误恢复机制通过每回合清零的刷新计数（`_auth_pool_refresh_counts`）防止死循环，若同一凭据连续刷新成功次数超限，则让 fallback 链接管，换用其他 provider 或策略。"
+ },
+ "ab-09": {
+  "query": "TTS 管线靠什么提前开始合成音频？流式回调 stream_callback 是干嘛的？",
+  "answer": "TTS 管线靠 `stream_callback` 流式增量回调提前开始合成音频，无需等待模型回答完整。该回调在每轮迭代中接收增量输出，使音频合成与文本生成并行进行。`stream_callback` 是 `run_conversation` 函数的参数之一，用于实时传递生成结果，从而降低首字延迟。"
+ },
+ "ab-10": {
+  "query": "RRF 是什么？BM25 和向量检索两个结果集的排名是怎么融合成一份的？",
+  "answer": "RRF（Reciprocal Rank Fusion，倒数排名融合）是一种将多个检索结果的排名融合成一个的方法，公式为 Σ 1/(rank + k)，其中 k=60。它不关心BM25和向量检索的绝对分数（两者量纲不同，不能直接加权），只看每个文档在两个结果集中的排名。每个文档在BM25排名和向量排名中各算一次倒数，将两个倒数相加后排序，最终得到融合后的排名。"
+ },
+ "ab-11": {
+  "query": "MoA 和 MoE 到底有什么区别？总感觉两个都是多模型，面试千万别搞混。",
+  "answer": "MoA 是应用层多个独立 LLM 的组合，让多个参考模型各答一遍，再由聚合模型综合出最终结果；MoE 是单个模型内部的专家网络稀疏激活，属于模型架构层。两者不在同一层级，MoA 慢且贵，MoE 省算力。面试时需明确区分：MoA 是“多模型协作”，MoE 是“单模型内部结构”。"
+ },
+ "ab-14": {
+  "query": "HyDE 是什么检索技巧？它怎么解决查询太模糊、检索不到东西的问题？",
+  "answer": "HyDE 是一种查询改写策略，核心是先让 LLM 生成一个“假设答案”，再用这个答案去检索，因为答案比原始问题更接近文档语义。它专门解决模糊查询问题，比如“我想找那个讲内存优化的”这类表述，直接搜容易命中无关内容。通过生成假设答案，HyDE 能把模糊意图转化为更具体的语义向量，提升检索召回率。"
+ },
+ "cl-01": {
+  "query": "prompt cache 和消息规范化有什么关系",
+  "answer": "Prompt cache 依赖请求前缀的字节级完全一致，而消息规范化（如统一 strip 首尾空白、JSON sort_keys 固定序列化）正是为了消除前缀中的微小漂移，确保缓存命中。规范化手段包括固定 system prompt 重建、api_content sidecar 原样重放字节、工具调用参数稳定序列化等。这些措施直接服务于前缀稳定性这一设计原则，避免因字节变化导致缓存失效、成本暴涨。"
+ },
+ "cl-02": {
+  "query": "上下文压缩和消息角色交替有什么联系",
+  "answer": "上下文压缩和消息角色交替都涉及对话历史的处理，但二者机制不同。压缩通过辅助模型将中间历史总结成摘要，替换原始消息以保留头尾；而消息角色交替则指对话中不同角色（如用户、助手）的轮换。压缩时需注意切分点不能拆散工具调用配对，这与角色交替的完整性相关。压缩是破坏性操作，用真值token数判断，而角色交替是对话结构的自然属性。"
+ },
+ "cl-03": {
+  "query": "fallback 和重试的区别是什么",
+  "answer": "重试是同一家 provider 再来一次，适合瞬时问题如网络抖动；fallback 是换一家备用 provider 重新开始，适合持续问题如限流或认证失败。触发时机上，429 限流立即切 fallback，传输超时先重试一次再切，内容过滤拒绝只切一次。切换 fallback 后重试计数清零，给备用 provider 公平的尝试机会。重试可能伴随修复动作（如刷新凭据），而 fallback 是彻底重建请求参数。"
+ },
+ "cl-04": {
+  "query": "Hermes 说\"不信任任何上游\"，消息消毒和消息规范化是不是都是发请求前把消息变成能用的样子？两者侧重点有什么不同？",
+  "answer": "消息消毒和消息规范化都是在发请求前把消息修成合法可用的样子，但侧重点不同。消毒侧重修复两类脏数据：工具调用参数JSON损坏（改成`{}`）和角色交替违规（合并连续assistant、丢弃孤儿tool、合并连续user），目的是防止provider拒收或静默返回空响应。规范化则更偏向于将消息整理成符合标准格式的通用流程，而消毒是专门针对会触发provider报错或死循环的特定问题做防御性修复。消毒是发请求前的最后一道防线，主要应对外部来源（如gateway重放、会话恢复）喂入的已损坏历史。"
+ },
+ "cl-05": {
+  "query": "Hermes 每回合开头要重置哪些 per-turn 状态？压缩标志、去重账本、循环计数器、认证池各自为什么必须归零？",
+  "answer": "Hermes 每回合开头要重置三个 per-turn 状态：`_last_compaction_in_place`（运行级压缩信号）、`_last_compression_attempt_recorded`（本次尝试是否已记录）、`_last_compression_attempt_in_place`（本次尝试是 in-place 还是 rotation）。压缩标志必须归零，因为 gateway 跨回合复用同一个 agent 对象，若不重置，上一回合的压缩信号会残留，导致 gateway 误判当前回合发生了压缩。去重账本必须归零，防止跨回合重复处理同一内容。循环计数器必须归零，避免跨回合累计计数导致逻辑错误。认证池必须归零，防止上一回合的认证状态污染当前回合的权限判断。"
+ },
+ "cl-06": {
+  "query": "MoA 聚合上下文和 prefill messages 都是往请求里塞东西，两者注入的位置和用途有什么异同？",
+  "answer": "MoA 聚合上下文是在发聚合请求前，让所有参考模型各答一遍，把答案汇总成“参考资料”拼到用户消息末尾，供聚合模型综合出最终回答。prefill messages 则是直接往请求里塞预设的上下文内容，用于引导模型行为或补充背景信息。两者注入位置都在请求的消息列表中，但 MoA 注入的是动态生成的参考回答，位于最后一条用户消息末尾；prefill 注入的是静态预设内容，通常放在消息序列开头。用途上，MoA 用于多模型协作综合答案，prefill 用于单模型对话的上下文设定。"
+ },
+ "cl-07": {
+  "query": "RAG 两阶段检索为什么是 bi-encoder 粗召回 + cross-encoder 精排？这两步是怎么衔接起来的？",
+  "answer": "bi-encoder 粗召回和 cross-encoder 精排的组合源于两者性能的互补：bi-encoder 可离线预存文档向量，速度快但相关度判断粗糙；cross-encoder 通过交叉注意力深度交互，精度高但每个查询-文档对都需实时计算，无法全量使用。因此 RAG 采用两阶段衔接：先用混合检索（向量+BM25 融合）从全库粗筛出 16 条候选，再让 cross-encoder 仅对这 16 条逐个打分排序，最终取 top-4 注入上下文。这种\"粗筛小集精排\"的结构既控制了计算成本，又显著提升检索精度。"
+ },
+ "cl-08": {
+  "query": "Hermes 发给 provider 的请求参数 api_kwargs 是怎么构建出来的？钩子函数可以在它发出前改写吗？",
+  "answer": "Hermes 的 api_kwargs 由 `agent._build_api_kwargs(api_messages)` 构建，返回一个包含 model、messages、max_tokens、temperature、tools、stream、extra_headers 等字段的字典。钩子函数可以在请求发出前改写它，例如直接修改字段（如添加 `x-initiator` 头）或通过 `run_llm_execution_middleware` 中间件整体替换 payload。这种字典设计便于动态调整参数，显式参数签名无法实现此类扩展。"
+ },
+ "cl-09": {
+  "query": "消息角色交替违规会导致 provider 静默返回空内容，这种空响应会不会触发 Hermes 的 fallback 切换？",
+  "answer": "空响应会触发 Hermes 的 fallback 切换。笔记指出，角色交替违规会导致多数 provider 静默返回空内容而非报错，进而触发重试循环。Hermes 的恢复机制（如空响应 nudge、steer 注入）正是围绕维护角色交替设计的，以应对这种空响应场景。"
+ },
+ "cl-10": {
+  "query": "MoA 的 base64 魔数前缀消息和上下文注入都会往消息里塞东西，Hermes 怎么保证落库的是干净消息、同时不破坏缓存前缀？",
+  "answer": "MoA 通过 `decode_moa_turn` 机制保证落库干净：`run_conversation` 开头检测到带 `__HERMES_MOA_TURN_V1__` 魔数前缀的消息时，会解出真实 prompt 和 config，并将 `user_message` 和持久化消息都还原成用户原话，从而防止 base64 乱码前缀进入数据库或 transcript。对于不带前缀的普通消息，则原样返回，实现零开销。缓存前缀方面，MoA 不压印 sidecar，以保持前缀稳定，避免破坏缓存。"
+ },
+ "cl-11": {
+  "query": "查询改写会把一个问题拆成多个子查询，每个子查询都要重新走检索和 rerank 吗？这成本是不是有点高？",
+  "answer": "是的，多查询拆分策略会把一个问题拆成 3-5 个子查询，每个子查询都需要独立走一遍检索和 rerank 流程，最后合并去重。这会带来额外成本：每次查询多一次 LLM 改写调用，加上 N 次检索，延迟也会增加。但实际使用中通常不会对所有查询启用，而是通过分数阈值判断，只对复杂或模糊查询进行改写，简单查询直接搜索，以此控制成本。"
+ },
+ "cl-12": {
+  "query": "run_agent.py 里的转发器和 conversation_loop.py 里的主循环是什么关系？为什么要把实现拆到独立模块？",
+  "answer": "run_agent.py 里的 run_conversation 是转发器薄壳，真正的主循环实现在 agent/conversation_loop.py 的同名函数中。入口只负责跳转，并完成会话上下文（ContextVar）的初始化和 finally 清理。拆到独立模块是为了保持外部调用方接口不变，同时让实现代码独立演进和测试，避免撑大 run_agent.py。这类似门面模式，接口稳定而实现可替换。"
+ },
+ "cl-13": {
+  "query": "agent_init.py 重构把 AIAgent.__init__ 的哪些逻辑拆出去了？ProviderProfile 的声明式设计和这次重构有什么关系？",
+  "answer": "重构把 `AIAgent.__init__` 原有的约1400行、60+参数的逻辑拆到了 `agent/agent_init.py` 的 `init_agent()` 函数中，`run_agent.py` 只保留薄包装。`_ra()` 延迟引用机制确保旧测试对 `run_agent.xxx` 的 mock 仍能生效，避免模块级 import 循环。ProviderProfile 的声明式设计与此重构相关，具体关联见笔记引用的 `hermes-provider-profile-design` 文档，但笔记未展开说明其直接关系。"
+ },
+ "sh-36": {
+  "query": "Hermes 每个回合的上下文是怎么从零开始构建的？build_turn_context 这个函数主要负责什么？",
+  "answer": "Hermes 每个回合的上下文通过 `build_turn_context` 函数从零构建，它集中执行每回合一次的 setup 工作，包括 stdio 守护、retry 计数清零、用户消息清洗、todo/nudge 注入、system prompt 恢复或构建、preflight 压缩、插件钩子、外部记忆 prefetch 和崩溃韧性持久化。该函数返回一个 `TurnContext` 对象，携带主循环接下来要读取的局部变量，如清洗后的 `user_message`、原始消息 `original_user_message`、工作消息列表 `messages` 和持久化历史基线 `conversation_history`。`build_turn_context` 的主要职责是将 setup 与主循环解耦，显式传递结果，确保循环输入完整且状态正确。"
+ },
+ "sh-37": {
+  "query": "cron 任务超时没跑完，内容是不是就丢了？怎么排查 cron job 的失败原因？",
+  "answer": "cron 任务超时未跑完时，内容不会丢失。调度器会在 Hermes 进程下次启动时检测到遗漏的 job 并立即补跑，内容照常投递。排查失败原因可从三方面入手：确认 Hermes 进程是否在预定时间运行（未运行则任务不触发）；检查 cron job 配置中的 skill 名称是否歧义、`deliver` 参数是否可解析；查看注入扫描器是否误报拦截（如 `deception_hide` 模式命中合法指令）。"
+ },
+ "sh-38": {
+  "query": "Hermes Desktop 启动时 Electron 下载失败怎么办？飞书适配器连不上是什么原因？",
+  "answer": "Hermes Desktop 启动时 Electron 下载失败，可设置镜像加速：`export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`，再执行 `hermes desktop`。飞书适配器连不上是因为 lark-oapi 版本不匹配，本机安装的 1.5.3 缺少 `extra_ua_tags` 参数（该参数 1.6.8 才加入）。修复方法是执行 `uv sync --extra feishu` 或 `uv pip install \"lark-oapi==1.6.8\"` 升级到正确版本。"
+ },
+ "sh-39": {
+  "query": "飞书 Markdown 消息在 Hermes 里显示格式错乱，问题出在哪？",
+  "answer": "问题出在 `_build_outbound_payload()` 的三个分支互斥，一条消息只能选一种格式。只要内容包含表格，就会被 `_MARKDOWN_TABLE_RE` 正则检测到，整条消息强制降级为纯文本发送，导致表格之前的标题、加粗等 markdown 符号原样裸露。飞书 post 类型的富文本元素不渲染表格，发送 post 消息时表格部分会显示为空白，所以作者选择了纯文本保底策略。"
+ },
+ "sh-40": {
+  "query": "用户消息发到一半被打断，Hermes 怎么保存已经生成的部分回复？",
+  "answer": "用户消息发到一半被打断时，Hermes 会从 agent 的 `_current_streamed_assistant_text` 变量中取出已流式输出的文本，剥掉 think 块并去除空白。如果有半截内容，就将其作为 assistant 消息追加到 messages 历史中，并作为最终回复；如果一个字都没输出，则生成一条\"还在等模型响应 X 秒\"的占位消息。最后会持久化会话，确保下一回合模型能看到自己说过的半截内容，从而正确理解用户的纠错。"
+ },
+ "sh-41": {
+  "query": "DeepEval 和 Langfuse 都是 LLM 评测观测工具，它们到底有什么区别？",
+  "answer": "DeepEval 是本地评估框架，类似单元测试工具，用于离线评估 LLM 应用“答得好不好”，支持 pytest 集成和 CI 回归；Langfuse 是服务端可观测性平台，类似 APM 监控，用于生产环境追踪 trace、成本、延迟和错误。DeepEval 提供丰富指标库和 LLM-as-judge 封装，但不做线上观测；Langfuse 侧重生产监控和 prompt 管理，评估能力不如 DeepEval 深入。两者互补，生产环境常组合使用：发版前用 DeepEval 跑回归，上线后用 Langfuse 观测，线上异常回流成 golden 用例形成闭环。"
+ },
+ "sh-42": {
+  "query": "Python 里动态加载模块的几种方式分别是什么？importlib 和 __import__ 有什么区别？",
+  "answer": "Python 动态加载模块主要有三种方式：使用 `importlib.import_module()` 按模块名加载、通过 `importlib.util.spec_from_file_location()` 从文件路径加载，以及使用底层的内置函数 `__import__()`。`importlib` 是推荐的高级接口，而 `__import__` 是解释器执行 `import` 语句时实际调用的底层函数。两者的主要区别在于 `importlib` 对嵌套包的处理更直观，且提供了更丰富的工具函数，而 `__import__` 返回值的处理较为繁琐，因此日常开发中优先使用 `importlib`。此外，还可以通过修改 `sys.path` 后正常导入，或使用 `exec` 执行代码，但后者存在安全风险且不推荐。"
+ },
+ "sh-43": {
+  "query": "Hermes 识别用户意图（比如区分聊天和任务）是怎么做的？有专门的笔记讲这个吗？",
+  "answer": "Hermes 没有独立的意图识别模块，源码中搜 `intent` 只找到注释和 `intent_ack_continuation`（一个空响应恢复机制，非分类器）。它的意图理解由 LLM 在对话循环中隐式完成，模型直接判断用户意图并调用工具。此外还有几个辅助机制：skills 自动匹配（扫描技能描述路由）、斜杠命令（确定性指令）、网关消息路由（平台级）。设计依据是 LLM 本身能理解语义，无需再套传统分类器，避免重复劳动和额外延迟。"
+ },
+ "mh-36": {
+  "query": "Hermes 的 LLM 调用链从 conversation_loop 到 chat_completion_helpers 的 create 请求，流式和非流式两条路分别经过哪些转发器？",
+  "answer": "流式路径：conversation_loop.py:1762 的 run_conversation → :3121 调用 agent._interruptible_streaming_api_call → run_agent.py:7034 的 forwarder 桥 → chat_completion_helpers.py:3275 的 interruptible_streaming_api_call → :3335 判断是否 direct（是则转非流式）→ :3473/:3993/:4543 的 relay_llm.stream → :3907 的 _open_stream → :3930 的 create(stream=True)。\n\n非流式路径：conversation_loop 同样经 run_agent forwarder → chat_completion_helpers.py:1335 的 interruptible_api_call → :926 的 _dispatch_nonstreaming（provider 分发）→ :999 的 create(stream=False)。\n\n两条路径在 chat.completions.create 处汇合，流式默认走 :3275，非流式用于 direct/cron 场景。"
+ },
+ "mh-37": {
+  "query": "Obsidian vault 作为 llm-wiki 的知识库，Hermes 是怎么对接和使用的？搭建过程有踩过哪些坑？",
+  "answer": "Hermes 通过安装 `llm-wiki`、`obsidian` 和 `personal-knowledge-mgmt` 等 skills 来对接 Obsidian vault，将 `D:\\llmwiki\\llm-wiki` 作为知识库路径。它遵循 Karpathy 三层架构：`raw/` 层不可变，`entities/`、`concepts/` 等层由 AI 自由创建和更新，`SCHEMA.md` 由人类定义规则。配置了环境变量 `OBSIDIAN_VAULT_PATH` 和 `WIKI_PATH`，并设置两个 cron 任务（每日扫描和 Inbox 分类）实现自动化管理。搭建过程中可能遇到的坑包括：需要正确配置 Tavily API Key 用于 web 搜索，以及确保 vault 路径在 Windows 环境下使用 `/d/llmwiki/llm-wiki` 格式。"
+ },
+ "mh-38": {
+  "query": "Hermes 的消息消毒和消息规范化都是发请求前处理消息，两者分别管什么？和 message-sanitize 笔记里的消毒清单怎么对应？",
+  "answer": "消息消毒和消息规范化都是发请求前的处理，但分工不同。消毒负责修复两类脏数据：一是工具调用的参数JSON损坏（如None、空字符串或非法JSON，统一改成`{}`并打标记），二是角色交替违规（连续assistant合并、孤儿tool丢弃、连续user换行合并）。规范化则处理消息格式的统一，确保结构合法。消毒清单对应笔记中的两层：第一层修工具参数JSON（1257-1267行），第二层修角色交替（1279-1286行），两者共同防止provider拒收或静默返回空响应。"
+ },
+ "ab-16": {
+  "query": "MCP 是什么协议？它和 Function Calling 有什么区别？",
+  "answer": "MCP 是一种用于连接 AI 模型与外部工具/数据源的开放协议，而 Function Calling 是模型自身的一种能力，用于在对话中决定调用哪个函数并生成参数。MCP 是标准化的通信层，支持动态发现和调用远程工具；Function Calling 则通常局限于模型已定义好的函数列表，由模型直接输出调用指令。MCP 更强调互操作性和生态集成，而 Function Calling 更偏向单次推理中的工具选择机制。"
+ },
+ "ab-17": {
+  "query": "TTS 是什么？LLM 输出怎么转成语音？",
+  "answer": "TTS 是文本转语音技术，用于将 LLM 生成的文本合成音频。在 Hermes 中，通过 `stream_callback` 实现流式增量回调，让 TTS 管线在回答未完成时提前开始合成音频，无需等待完整输出。LLM 输出通过该回调逐段传给 TTS 系统，实现边生成边合成的效果。"
+ }
+}

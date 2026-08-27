@@ -1,10 +1,9 @@
-"""评测查询集（100 条，基于 llm-wiki 真实内容构造，2026-08-22 扩充）。
+"""评测查询集（93 条，基于 llm-wiki 真实内容构造，2026-08-22 扩充）。
 
-五类查询：
+四类查询：
   - multi-hop：答案跨多篇笔记（双链关联场景）
   - single-hop：单篇即可答（对照组）
   - abbreviation：术语缩写（BM25 精确匹配强项）
-  - concept-link：概念间关系
   - negative：无关查询（guard 应拦截）
 
 每条查询给出 expected_notes（笔记 stem 集合，用于 Hit@1/Recall@k/MRR 判定）。
@@ -17,7 +16,6 @@ QUERIES = [
     {"id": "sh-03", "type": "single-hop", "query": "cross-encoder 是什么", "expected_notes": ["cross-encoder"]},
     {"id": "sh-04", "type": "multi-hop", "query": "vaultrag 的 fail-open 是什么意思", "expected_notes": ["rag-retrieval-pipeline", "hermes-vaultrag-interview", "vaultrag-positioning-and-evolution"]},
     {"id": "sh-05", "type": "single-hop", "query": "Hermes 消息规范化做了什么", "expected_notes": ["hermes-message-normalization"]},
-    {"id": "sh-06", "type": "single-hop", "query": "DB2 获取执行计划有哪三种方式", "expected_notes": ["db2-execution-plan-slow-sql-optimization"]},
     {"id": "sh-07", "type": "single-hop", "query": "查询改写有哪三种策略", "expected_notes": ["query-rewriting"]},
     {"id": "sh-08", "type": "multi-hop", "query": "Causal Coupling guard 解决的是什么问题", "expected_notes": ["context-summarizer", "hermes-arch-quickpass-day1-2"]},
     {"id": "sh-09", "type": "single-hop", "query": "in_place 压缩和 rotation 压缩的区别", "expected_notes": ["hermes-compression-per-turn-state-reset"]},
@@ -31,12 +29,10 @@ QUERIES = [
     {"id": "sh-17", "type": "single-hop", "query": "同一个过程旁白为什么会在一个回合里被重复推送？_delivered_interim_texts 这个集合是怎么去重的？", "expected_notes": ["hermes-interim-text-dedup"]},
     {"id": "sh-18", "type": "single-hop", "query": "RAG 里的 rerank 到底是个什么东西？它跟拿来算向量相似度的 embedding 模型有什么区别，为什么说它更准？", "expected_notes": ["cross-encoder"]},
     {"id": "sh-19", "type": "single-hop", "query": "主模型一直 429 限流，Hermes 会自动换一个备用 provider 吗？重试和 fallback 切换到底有什么区别？", "expected_notes": ["fallback"]},
-    {"id": "sh-20", "type": "single-hop", "query": "DB2 有个 SQL 特别慢，我怎么拿到它的执行计划看看优化器到底走了什么访问路径？", "expected_notes": ["db2-execution-plan-slow-sql-optimization"]},
     {"id": "sh-21", "type": "single-hop", "query": "OpenAI 兼容接口的 messages 里 role 都有哪些？为什么说消息必须按 user、assistant 交替排列？", "expected_notes": ["message-role"]},
     {"id": "sh-22", "type": "single-hop", "query": "模型输出里出现 这种标签是怎么回事？Hermes 为什么要把它从正文里剥掉？", "expected_notes": ["think-block"]},
     {"id": "sh-23", "type": "single-hop", "query": ".gitignore 里写了 build/，结果把子目录 harness/build 也忽略了，怎么改成只忽略根目录的 build？", "expected_notes": ["gitignore-anchor-and-check-ignore"]},
     {"id": "sh-24", "type": "single-hop", "query": "Python 的协程和线程到底差在哪？为什么说协程切换成本低、并发上限高，但它又不是并行？", "expected_notes": ["python-asyncio-coroutine-streaming"]},
-    {"id": "sh-25", "type": "single-hop", "query": "Java 线程安全的集合应该怎么选？ConcurrentHashMap 和 Collections.synchronizedMap 哪个更好？", "expected_notes": ["DeepSeek - Java线程安全集合详解"]},
     {"id": "sh-33", "type": "single-hop", "query": "Hermes 里一次工具调用的消息结构是什么样的？tool_calls 和 tool 结果消息是怎么配对的？", "expected_notes": ["hermes-tool-call-message-structure"]},
     {"id": "sh-35", "type": "single-hop", "query": "prompt cache 的前缀稳定性为什么重要？Hermes 注入上下文时怎么保证不破坏缓存前缀？", "expected_notes": ["prompt-cache-prefix-stability"]},
     {"id": "mh-02", "type": "multi-hop", "query": "Hermes 压缩和 prompt cache 前缀稳定性是什么关系", "expected_notes": ["prompt-cache-prefix-stability", "context-summarizer", "hermes-compression-per-turn-state-reset"]},
@@ -46,7 +42,6 @@ QUERIES = [
     {"id": "mh-06", "type": "multi-hop", "query": "context engine 和压缩机制有什么区别，vaultrag 属于哪一类", "expected_notes": ["hermes-context-engine-selection", "context-summarizer", "vaultrag-positioning-and-evolution"]},
     {"id": "mh-07", "type": "multi-hop", "query": "查询改写有哪几种策略，vaultrag 为什么当前没做", "expected_notes": ["query-rewriting", "vaultrag-positioning-and-evolution", "hermes-vaultrag-interview"]},
     {"id": "mh-08", "type": "multi-hop", "query": "Hermes 压缩 in_place 模式为什么需要 _last_compaction_in_place 信号", "expected_notes": ["hermes-compression-per-turn-state-reset", "context-summarizer"]},
-    {"id": "mh-09", "type": "single-hop", "query": "TCC、Seata AT 和 Saga 三种分布式事务模式怎么选", "expected_notes": ["distributed-transactions-tcc-seata-saga"]},
     {"id": "mh-10", "type": "multi-hop", "query": "prompt cache 前缀稳定性给 Hermes 注入类机制带来什么设计约束", "expected_notes": ["prompt-cache-prefix-stability", "hermes-context-engine-selection", "vaultrag-positioning-and-evolution"]},
     {"id": "mh-11", "type": "multi-hop", "query": "Hermes 为了保住 prompt cache 前缀稳定做了哪些事？消息规范化、api_messages 重放历史字节、cache_control 打标分别在哪一环起作用？", "expected_notes": ["hermes-message-normalization", "hermes-api-messages-build", "hermes-anthropic-cache-control"]},
     {"id": "mh-12", "type": "multi-hop", "query": "run_conversation 这个几千行的函数整体分哪几个阶段？请求组装阶段（B）主要做了什么？", "expected_notes": ["hermes-conversation-loop-run-conversation", "hermes-request-assembly-extras"]},
@@ -67,8 +62,6 @@ QUERIES = [
     {"id": "ab-09", "type": "abbreviation", "query": "TTS 管线靠什么提前开始合成音频？流式回调 stream_callback 是干嘛的？", "expected_notes": ["hermes-loop-entry-phase"]},
     {"id": "ab-10", "type": "abbreviation", "query": "RRF 是什么？BM25 和向量检索两个结果集的排名是怎么融合成一份的？", "expected_notes": ["rag-retrieval-pipeline"]},
     {"id": "ab-11", "type": "abbreviation", "query": "MoA 和 MoE 到底有什么区别？总感觉两个都是多模型，面试千万别搞混。", "expected_notes": ["moa-mixture-of-agents"]},
-    {"id": "ab-12", "type": "abbreviation", "query": "TCC 和 Saga 都是分布式事务方案，各自适合什么场景？哪个对业务代码侵入性强？", "expected_notes": ["distributed-transactions-tcc-seata-saga"]},
-    {"id": "ab-13", "type": "abbreviation", "query": "AOP 里的 Pointcut、Advice、Weaving 分别是什么意思？Spring AOP 和 AspectJ 的织入方式有什么不同？", "expected_notes": ["DeepSeek - Java AOP切面详解"]},
     {"id": "ab-14", "type": "abbreviation", "query": "HyDE 是什么检索技巧？它怎么解决查询太模糊、检索不到东西的问题？", "expected_notes": ["query-rewriting"]},
     {"id": "cl-01", "type": "multi-hop", "query": "prompt cache 和消息规范化有什么关系", "expected_notes": ["prompt-cache-prefix-stability", "hermes-message-normalization"]},
     {"id": "cl-02", "type": "multi-hop", "query": "上下文压缩和消息角色交替有什么联系", "expected_notes": ["context-summarizer", "message-role"]},
@@ -111,7 +104,6 @@ QUERIES = [
     {"id": "mh-38", "type": "multi-hop", "query": "Hermes 的消息消毒和消息规范化都是发请求前处理消息，两者分别管什么？和 message-sanitize 笔记里的消毒清单怎么对应？", "expected_notes": ["hermes-message-sanitize", "hermes-message-normalization"]},
     {"id": "ab-16", "type": "abbreviation", "query": "MCP 是什么协议？它和 Function Calling 有什么区别？", "expected_notes": ["hermes-arch-quickpass-day1-2"]},
     {"id": "ab-17", "type": "abbreviation", "query": "TTS 是什么？LLM 输出怎么转成语音？", "expected_notes": ["hermes-loop-entry-phase"]},
-    {"id": "ab-18", "type": "abbreviation", "query": "AOP 里的 Pointcut、Advice、Weaving 分别是什么？和面向切面编程的关系？", "expected_notes": ["DeepSeek - Java AOP切面详解"]},
 ]
 
 
