@@ -411,7 +411,7 @@ class VaultIndex:
     # -- 检索 ----------------------------------------------------------
 
     def search(self, query_vec: np.ndarray, top_k: int = 4) -> List[Dict]:
-        """余弦相似度 top-k 检索，返回 [{text, source, score}]。"""
+        """余弦相似度 top-k 检索，返回 [{text, source, score, chunk_id}]。"""
         if self._matrix is None or query_vec is None:
             return []
         # 归一化后点积 = 余弦相似度
@@ -421,17 +421,25 @@ class VaultIndex:
         k = min(top_k, len(scores))
         idx = np.argsort(scores)[::-1][:k]
         return [
-            {"text": self._texts[i], "source": self._sources[i], "score": float(scores[i])}
+            {"text": self._texts[i], "source": self._sources[i],
+             "score": float(scores[i]), "chunk_id": int(i)}
             for i in idx
         ]
 
-    def hybrid_search(self, query: str, query_vec: np.ndarray, top_k: int = 8) -> List[Dict]:
-        """混合检索：向量 top-k + BM25 top-k → RRF 融合 → 返回 top_k。
+    def hybrid_search(self, query: str, query_vec: np.ndarray, top_k: int = 8,
+                      max_chunks_per_note: int = 1) -> List[Dict]:
+        """混合检索：向量 top-k + BM25 top-k → 块级 RRF 融合 → 返回 top_k。
 
         RRF（Reciprocal Rank Fusion，滑铁卢+Google 2019）：
-          对每个文档，score = Σ 1/(rank + k)，k 默认 60。
+          对每个块，score = Σ 1/(rank + k)，k 默认 60。
           不直接比较两种检索的原始分数（尺度不同），而是按名次融合——
-          两个列表里都排前面的文档自然胜出。
+          两个列表里都排前面的块自然胜出。
+
+        2026-08-28 修复（块级融合）：原实现以 source（笔记路径）为融合键，
+        每篇笔记只保留一个块，且 by_source 字典后写覆盖返回"BM25 末位块"
+        （往往最不相关）→ L4 评测 67% 失败（正确笔记 + 错误块）。
+        现改为 (source, chunk_id) 块级融合 + 每笔记最多 max_chunks_per_note
+        块（注入位多样性约束，可解释），返回每笔记融合分最高的块。
         """
         if self._matrix is None or query_vec is None:
             return []
@@ -440,23 +448,31 @@ class VaultIndex:
         # BM25 单独取 top_k*3
         bm25_idx = np.argsort(bm25_scores)[::-1][: top_k * 3]
         bm25 = [
-            {"text": self._texts[i], "source": self._sources[i], "score": float(bm25_scores[i])}
+            {"text": self._texts[i], "source": self._sources[i],
+             "score": float(bm25_scores[i]), "chunk_id": int(i)}
             for i in bm25_idx
         ]
 
         k_rrf = 60.0
         fusion = {}
         for rank, item in enumerate(dense + bm25):
-            key = item["source"]
+            key = (item["source"], item["chunk_id"])   # 块级融合键
             fusion[key] = fusion.get(key, 0.0) + 1.0 / (rank + k_rrf)
-        # 按融合分排序
-        ranked = sorted(fusion.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
-        # 找回完整条目（用 dense 里的，若不在则用 bm25 里的）
-        by_source = {item["source"]: item for item in dense + bm25}
+        # 按融合分排序；每笔记最多 max_chunks_per_note 块
+        ranked = sorted(fusion.items(), key=lambda kv: kv[1], reverse=True)
+        by_chunk = {(item["source"], item["chunk_id"]): item for item in dense + bm25}
+        per_note = {}
         results = []
-        for src, _score in ranked:
-            item = by_source[src]
-            results.append({**item, "rrf": _score})
+        for (src, cid), rrf_score in ranked:
+            if per_note.get(src, 0) >= max_chunks_per_note:
+                continue
+            item = by_chunk.get((src, cid))
+            if item is None:
+                continue
+            per_note[src] = per_note.get(src, 0) + 1
+            results.append({**item, "rrf": rrf_score})
+            if len(results) >= top_k:
+                break
         return results
 
     @property

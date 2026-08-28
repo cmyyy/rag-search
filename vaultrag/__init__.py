@@ -322,53 +322,79 @@ class VaultRAGEngine(ContextEngine):
         现统一 top_n=2，margin 真实生效，两路行为一致。
         """
         try:
+            rerank_failed = False
             if not self._index_ready:
                 self._index_ready = self.index.ensure_index()
             if not self._index_ready:
                 return {"query": query, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "index-not-ready"}
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "index-not-ready"}
             q = (query or "").strip()
             if not q:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-query"}
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "no-query"}
             if len(q) < _MIN_QUERY_CHARS:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "length-gate"}
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "length-gate"}
             qv = self.embedding.embed_query(q)
             if qv is None:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "embedding-failed"}
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "embedding-failed"}
             candidates = self.index.hybrid_search(q, qv, top_k=_HYBRID_RECALL)
             if not candidates:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-candidates"}
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "no-candidates"}
             # 过滤 index 页（MOC：关键词齐全但无答案 → rerank 误判高分）
             pool = [c for c in candidates if Path(c["source"]).stem != "index"]
             if not pool:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "reason": "no-pool"}
-            hits = pool[:top_k]
-            # guard：rerank 打分（top_n=2 取真实 top2，margin 才有意义），失败退回 RRF 分数
+                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "no-pool"}
+            # guard + 重排（2026-08-28 P0-2）：rerank 对 pool 全量打分
+            # （top_n=len(pool)），既做 guard 门槛判定，又按分数重排 hits。
+            # 原实现 top_n=2 只取门槛、hits 保持 RRF 序 → 排序类失败（相关块
+            # rank 3-5 被无关块挤掉）。guard 判定逻辑（top1/top2/margin/阈值）
+            # 一行不动；rerank 失败回退 RRF 序（fail-open）。
             guard_query = self._enhance_guard_query(q, pool)
             cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool]
-            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=2)
+            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=len(pool))
             if guard_scores:
                 top1 = float(guard_scores[0]["score"])
                 top2 = float(guard_scores[1]["score"]) if len(guard_scores) > 1 else 0.0
+                ordered = []
+                for gs in guard_scores:
+                    idx = gs.get("index", -1)
+                    if 0 <= idx < len(pool):
+                        ordered.append(pool[idx])
+                hits = ordered[:top_k] if ordered else pool[:top_k]
             else:
+                hits = pool[:top_k]
                 top1 = float(hits[0]["score"]) if hits else 0.0
                 top2 = float(hits[1]["score"]) if len(hits) > 1 else 0.0
+                # rerank 失败 fallback（fail-open）：top1 为 RRF/BM25 分，
+                # 与 rerank 分数不可比——标记供 trace/评测过滤（2026-08-28）
+                rerank_failed = True
             margin = top1 - top2
             multi = self._is_multi_concept(q)
             min_score = 0.15 if multi else _MIN_SCORE
             amb_margin = 0.05 if multi else 0.15
             if top1 < min_score:
                 return {"query": q, "hits": [], "verdict": "incorrect", "top1_score": top1,
-                        "top2_score": top2, "margin": margin, "multi_concept": multi,
+                        "top2_score": top2, "margin": margin, "multi_concept": multi, "rerank_failed": rerank_failed,
                         "reason": "score-below-threshold"}
-            verdict = "correct" if (top1 >= 0.40 and margin >= amb_margin) else "ambiguous"
-            return {"query": q, "hits": hits, "verdict": verdict, "top1_score": top1,
-                    "top2_score": top2, "margin": margin, "multi_concept": multi, "reason": "ok"}
+            # 2026-08-28 判定语义升级（P0 修复配套）：
+            #   correct（注入）= top1 >= 0.60 —— rerank 强相关语义分界。
+            #   实测修复后正样本 top1 全 >= 0.70、负样本误放类 <= 0.40（双峰，间隔清晰）。
+            #   ambiguous（不注入）= 0.02~0.60 —— 低置信，对齐 CRAG 三档
+            #   （Correct 注入 / Ambiguous 降级 / Incorrect 不注入）。
+            # margin 不再参与判定：原"top1>=0.40 且 margin>=0.15"在 P0-2
+            #   （rerank 全量重排）后失真——多个相关块分数都高 → margin 小 →
+            #   强相关被误判 ambiguous（MoA 0.994/margin 0.05）。0.60 强相关线
+            #   取代 margin 的怀疑角色，更简单且不误伤。margin 保留计算供 trace。
+            if top1 < 0.60:
+                return {"query": q, "hits": [], "verdict": "ambiguous", "top1_score": top1,
+                        "top2_score": top2, "margin": margin, "multi_concept": multi, "rerank_failed": rerank_failed,
+                        "reason": "low-confidence"}
+            return {"query": q, "hits": hits, "verdict": "correct", "top1_score": top1,
+                    "top2_score": top2, "margin": margin, "multi_concept": multi, "rerank_failed": rerank_failed, "reason": "ok"}
         except Exception as e:
             logger.warning("[vaultrag] search failed, fail-open: %s", e)
             return None
@@ -429,8 +455,10 @@ class VaultRAGEngine(ContextEngine):
             trace["top1_top2_margin"] = round(result["margin"], 4)
             if result["multi_concept"]:
                 trace["multi_concept"] = True
+            if result.get("rerank_failed"):
+                trace["rerank_failed"] = True  # fallback 分数（BM25/RRF），与 rerank 分数不可比
 
-            if result["verdict"] in ("incorrect", "skipped"):
+            if result["verdict"] in ("incorrect", "skipped", "ambiguous"):
                 trace["verdict"] = result["verdict"]
                 trace["reason"] = result["reason"]
                 self._emit_trace(trace)
@@ -453,11 +481,6 @@ class VaultRAGEngine(ContextEngine):
                     # 来源信息只进日志（2026-08-16 实测 DeepSeek 宽容，但不赌）
                 }
             )
-            if verdict == "ambiguous":
-                logger.info(
-                    "[vaultrag] low-confidence injection (verdict=ambiguous, query=%r, top=%.3f)",
-                    query[:40], top1,
-                )
             logger.info(
                 "[vaultrag] injected %d hits (query=%r, top=%.3f) sources=%s",
                 len(hits), query[:40], top1,

@@ -99,6 +99,11 @@ def _rag_search(args: dict, **kwargs) -> str:
             f"[rag] 检索无把握（top1 分数 {result['top1_score']:.3f} 低于阈值），"
             "未返回结果——知识库中可能没有相关内容"
         )
+    if reason == "low-confidence":
+        return (
+            f"[rag] 检索结果置信度低（top1 分数 {result['top1_score']:.3f} < 0.40），"
+            "未返回——可尝试换一种问法或补充关键词"
+        )
 
     hits = result["hits"]
     if not hits:

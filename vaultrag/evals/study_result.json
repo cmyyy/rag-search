@@ -1,6 +1,6 @@
 {
  "meta": {
-  "ts": "2026-08-28 02:49:17",
+  "ts": "2026-08-28 23:07:47",
   "vault": "D:\\llmwiki\\llm-wiki",
   "vault_fp": "82 files / 646847 bytes",
   "n_queries": 93,
@@ -11,9 +11,9 @@
   "single-hop": {
    "queries": 32,
    "hit1": [
-    26,
-    26,
-    26
+    29,
+    29,
+    29
    ],
    "recall5": [
     31.0,
@@ -29,19 +29,19 @@
   "multi-hop": {
    "queries": 34,
    "hit1": [
-    26,
-    26,
-    26
+    25,
+    25,
+    25
    ],
    "recall5": [
-    31.0,
-    31.0,
-    31.0
+    26.583333333333332,
+    26.583333333333332,
+    26.583333333333332
    ],
    "full": [
-    30,
-    30,
-    30
+    28,
+    28,
+    28
    ]
   },
   "abbreviation": {
@@ -52,14 +52,14 @@
     6
    ],
    "recall5": [
-    9.5,
-    9.5,
-    9.5
+    8.5,
+    8.5,
+    8.5
    ],
    "full": [
-    10,
-    10,
-    10
+    9,
+    9,
+    9
    ]
   }
  },
@@ -73,43 +73,50 @@
  },
  "sens": [
   {
-   "threshold": 0.005,
-   "pos_miss": 0,
-   "pos_total": 78,
-   "neg_fp": 2,
-   "neg_total": 15
-  },
-  {
-   "threshold": 0.01,
-   "pos_miss": 0,
-   "pos_total": 78,
-   "neg_fp": 2,
-   "neg_total": 15
-  },
-  {
-   "threshold": 0.02,
+   "threshold": 0.2,
    "pos_miss": 2,
    "pos_total": 78,
-   "neg_fp": 0,
+   "neg_fp": 1,
    "neg_total": 15
   },
   {
-   "threshold": 0.03,
+   "threshold": 0.3,
    "pos_miss": 3,
+   "pos_total": 78,
+   "neg_fp": 1,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.4,
+   "pos_miss": 4,
+   "pos_total": 78,
+   "neg_fp": 1,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.5,
+   "pos_miss": 5,
    "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   },
   {
-   "threshold": 0.05,
-   "pos_miss": 3,
+   "threshold": 0.6,
+   "pos_miss": 5,
    "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   },
   {
-   "threshold": 0.1,
+   "threshold": 0.7,
    "pos_miss": 6,
+   "pos_total": 78,
+   "neg_fp": 0,
+   "neg_total": 15
+  },
+  {
+   "threshold": 0.8,
+   "pos_miss": 9,
    "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
@@ -117,17 +124,17 @@
  ],
  "judge_out": {
   "Contextual Precision": {
-   "n": 77,
-   "mean": 0.5186147186147186,
-   "std": 0.38764081915260085
+   "n": 73,
+   "mean": 0.9460234367719691,
+   "std": 0.08931533625748797
   },
   "Contextual Recall": {
-   "n": 74,
-   "mean": 0.6822072072072072,
-   "std": 0.4135116263816824
+   "n": 73,
+   "mean": 0.9785388127853881,
+   "std": 0.10677220805997713
   },
   "_judge_failures": {
-   "n": 1
+   "n": 6
   }
  }
 }

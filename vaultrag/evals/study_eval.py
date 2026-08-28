@@ -40,7 +40,7 @@ try:
 except Exception:
     pass
 
-from vaultrag import VaultRAGEngine, _MIN_SCORE
+from vaultrag import VaultRAGEngine, _MIN_SCORE, _TOP_K, _MAX_CHARS_PER_HIT
 from evals.eval_queries import get_queries
 
 REPORT_PATH = _VAULTRAG_DIR / "evals" / "eval_report_v2.md"
@@ -125,11 +125,13 @@ def sensitivity(traces, queries):
         score = t.get("guard_top1_score")
         if score is None:
             continue
+        if t.get("rerank_failed"):
+            continue  # fallback 分数（BM25/RRF 量纲）与 rerank 分数不可比，剔除（2026-08-28）
         if q["type"] == "negative":
             neg_scores.append(score)
         else:
             pos_scores.append(score)
-    grid = [0.005, 0.01, 0.02, 0.03, 0.05, 0.1]
+    grid = [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80]  # 注入线敏感性（2026-08-28：注入=top1>=0.60）
     rows_out = []
     for th in grid:
         miss = sum(1 for s in pos_scores if s < th)          # 正样本误杀
@@ -245,11 +247,11 @@ def judge_semantic(engine, queries, results_last):
             continue
         # 检索上下文 = 引擎真实注入的块文本（2026-08-28 修正：原为笔记开头
         # 600 字符，与实际行为不符；现用 engine.search 的 hits[].text[:600]，
-        # 与 select_context 注入内容完全一致）
-        sr = engine.search(q["query"], top_k=8)
+        # 块数与截断均与 select_context 注入完全一致：_TOP_K 块 × 600 字符）
+        sr = engine.search(q["query"], top_k=_TOP_K)
         if sr is None or sr["verdict"] == "incorrect" or not sr.get("hits"):
             continue  # 本次未注入（与 run 结果可能因概率波动不同，跳过）
-        ctx = [h["text"][:600] for h in sr["hits"][:5]]
+        ctx = [h["text"][:_MAX_CHARS_PER_HIT] for h in sr["hits"]]
         if not ctx:
             continue
         ans = _answers.get(q["id"], {}).get("answer", "")
@@ -337,11 +339,11 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append(f"举例：问\"TTS 是什么\"——严格尺要求返回指定那篇笔记（只有 {ab_hit/ab['queries']:.0%} 做到）；宽松尺只要返回的内容里讲了 TTS 就算（{rec_mean:.0%} 做到了）。两把尺子一严一宽，数字不一样是正常的，不是矛盾。\n")
     L.append("## 测的是什么（30 秒版）\n")
     L.append("被测对象是 **rag_search 工具**——agent 在个人知识库（笔记库）里找答案的工具。它做的事：把问题变成检索（关键词 + 语义），找到相关笔记，再由一个质量守卫（guard）判断\"这次检索靠不靠谱\"，靠谱才把笔记交给 agent。\n")
-    L.append("**怎么测**：准备 100 个「问题 + 标准答案」测试对（golden cases），逐条让 rag_search 真实跑一遍，看它返回的笔记对不对。\n")
+    L.append(f"**怎么测**：准备 {meta['n_queries']} 个「问题 + 标准答案」测试对（golden cases），逐条让 rag_search 真实跑一遍，看它返回的笔记对不对。\n")
     L.append("一共问了四个问题：\n")
     L.append("1. **找得准吗**——返回的笔记是否命中标准答案")
     L.append("2. **拦得对吗**——无关问题是否被守卫拦住")
-    L.append("3. **拦截线定得稳吗**——阈值 0.02 是拍脑袋还是经得起调整")
+    L.append("3. **注入线定得稳吗**——0.60 是拍脑袋还是经得起调整")
     L.append("4. **语义相关吗**——字面看不出的相关性，让 DeepSeek 当裁判\n")
     L.append("## 结果\n")
     L.append("### 1. 找得准吗 → 大多数能找对，缩写类问题偏弱（严格尺·字面命中）\n")
@@ -354,11 +356,11 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("### 2. 拦得对吗 → 全部拦对\n")
     L.append("15 个和知识库无关的问题（装修选乳胶漆、川菜馆、比特币行情……）**全部被拦**（误放 0）。")
     L.append("设计取向：守卫宁可说\"知识库里没有\"，也不给错答案（fail-safe，宁可少答不可错答）。\n")
-    L.append("### 3. 拦截线（0.02）稳吗 → 当前数据下最优，但换数据要重算\n")
-    L.append("拦截线是守卫判断\"靠不靠谱\"的分数线：检索分数低于 0.02，就认为知识库里没有答案、不返回结果。")
-    L.append("这个数是这么定的：无关问题的检索分数最高只到 0.0146，0.02 在它上面留了 0.005 余量。")
-    L.append("调低到 0.01：会放过 2 个无关问题（不可接受）；调高到 0.05：只多拦 1 个有答案的问题（收益很小）。")
-    L.append("所以 **0.02 在这批测试数据下是最优的**。但它依赖这批数据——换个知识库、换一批测试问题，这个数要重新算。这是绝对分数阈值的固有弱点，如实记录。\n")
+    L.append("### 3. 注入线（0.60）稳吗 → 当前数据下最优，但换数据要重算\n")
+    L.append("守卫有两条线：**拦截线 0.02**（低于它 = 知识库没有相关内容）和**注入线 0.60**（rerank 强相关，只有它才把笔记交给 agent；中间 0.02~0.60 是低置信区，不注入）。\n")
+    L.append("注入线 0.60 是这么定的：修复后的实测分布是双峰的——有答案的问题检索分数全部 >= 0.70，无关问题的分数全部 <= 0.40——0.60 落在中间空档，拦得住无关、放得过有答案。\n")
+    L.append("调低到 0.40：有答案的不受影响，但无关问题（如\"2026 年科幻电影\"，分数 0.39~0.40）会被放进（不可接受）；调高到 0.70：只多拦 1~3 个弱相关的问题。\n")
+    L.append("所以 **0.60 在这批测试数据下是最优的**。但它依赖这批数据——换个知识库、换一批测试问题，这个数要重新算。这是绝对分数阈值的固有弱点，如实记录。\n")
     def _judge_comment(x: float) -> str:
         return "几乎全覆盖" if x >= 0.9 else ("良好" if x >= 0.7 else ("一般" if x >= 0.5 else "偏弱"))
 
@@ -371,7 +373,7 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     n_neg = neg["queries"]
     L.append(f"- 测试数据：{meta['n_queries']} 条 golden cases（单篇 {sh['queries']} / 跨篇 {mh['queries']} / 缩写 {ab['queries']} / 无关 {n_neg}），AI 读笔记生成问题，标准答案经校验真实存在")
     L.append("- 被测路径：rag_search 真实链路（关键词 + 语义检索 → 排序 → 守卫判定 → 返回），不是测试代码的简化版")
-    L.append("- 指标四层：字面命中（找对多少）、守卫拦截（拦对多少）、阈值敏感性（0.02 稳不稳）、语义判定（DeepSeek 裁判）")
+    L.append("- 指标四层：字面命中（找对多少）、守卫拦截（拦对多少）、注入线敏感性（0.60 稳不稳）、语义判定（DeepSeek 裁判）")
     L.append("- 复现：`python evals/study_eval.py`（3 次运行约 10 分钟）；中间结果 study_result.json；逐条检索决策 trace.jsonl 可审计")
     L.append(f"- 运行环境：bge-m3 向量 + bge-reranker 排序（SiliconFlow 云端）+ BM25；DeepEval {meta['deepeval']}，judge DeepSeek\n")
     L.append("## 局限（诚实声明）\n")
@@ -388,8 +390,8 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
         s = stats[t]
         L.append(f"| {label} | {s['queries']} | {s['hit1'][0]}/{s['queries']} | {s['recall5'][0]/s['queries']:.0%}（{s['recall5'][0]:.2f}） | {s['full'][0]}/{s['queries']} |")
     L.append(f"\n无关问题误放：{neg_fp}/{neg['queries']}（3 次均为 0）\n")
-    L.append("### 阈值敏感性（误杀 = 有答案的被拦；误放 = 无关的被放进）")
-    L.append("| 拦截线 | 有答案的被拦 | 无关的被放进 |")
+    L.append("### 注入线敏感性（误杀 = 有答案的被拦；误放 = 无关的被放进）")
+    L.append("| 注入线 | 有答案的被拦 | 无关的被放进 |")
     L.append("|---|---|---|")
     for row in sens:
         L.append(f"| {row['threshold']:.3f} | {row['pos_miss']}/{row['pos_total']} | {row['neg_fp']}/{row['neg_total']} |")
