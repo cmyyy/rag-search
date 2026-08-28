@@ -1,1 +1,1 @@
-{"Contextual Precision": {"n": 93, "mean": 0.8556302270011947, "std": 0.2633913729245776}, "Contextual Recall": {"n": 65, "mean": 0.9661172161172161, "std": 0.11944781634789658}, "_judge_failures": {"n": 10}}
+{"Contextual Precision": {"n": 77, "mean": 0.5186147186147186, "std": 0.38764081915260085}, "Contextual Recall": {"n": 74, "mean": 0.6822072072072072, "std": 0.4135116263816824}, "_judge_failures": {"n": 1}}

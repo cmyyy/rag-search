@@ -243,11 +243,13 @@ def judge_semantic(engine, queries, results_last):
         r = next((x for x in results_last if x["id"] == q["id"]), None)
         if not r or not r.get("injected") or not r.get("srcs"):
             continue
-        # 检索上下文 = 注入来源对应的笔记文本（按注入顺序）
-        ctx = []
-        for stem in r["srcs"][:5]:
-            txt = expected_text(engine.vault_root, stem, limit=600)
-            ctx.append(txt)
+        # 检索上下文 = 引擎真实注入的块文本（2026-08-28 修正：原为笔记开头
+        # 600 字符，与实际行为不符；现用 engine.search 的 hits[].text[:600]，
+        # 与 select_context 注入内容完全一致）
+        sr = engine.search(q["query"], top_k=8)
+        if sr is None or sr["verdict"] == "incorrect" or not sr.get("hits"):
+            continue  # 本次未注入（与 run 结果可能因概率波动不同，跳过）
+        ctx = [h["text"][:600] for h in sr["hits"][:5]]
         if not ctx:
             continue
         ans = _answers.get(q["id"], {}).get("answer", "")
@@ -357,10 +359,13 @@ def write_report(meta, stats, neg, sens, judge_out, queries):
     L.append("这个数是这么定的：无关问题的检索分数最高只到 0.0146，0.02 在它上面留了 0.005 余量。")
     L.append("调低到 0.01：会放过 2 个无关问题（不可接受）；调高到 0.05：只多拦 1 个有答案的问题（收益很小）。")
     L.append("所以 **0.02 在这批测试数据下是最优的**。但它依赖这批数据——换个知识库、换一批测试问题，这个数要重新算。这是绝对分数阈值的固有弱点，如实记录。\n")
-    L.append("### 4. 语义相关吗 → 很强（宽松尺·语义判定）\n")
+    def _judge_comment(x: float) -> str:
+        return "几乎全覆盖" if x >= 0.9 else ("良好" if x >= 0.7 else ("一般" if x >= 0.5 else "偏弱"))
+
+    L.append(f"### 4. 语义相关吗 → {_judge_comment(rec_mean)}（宽松尺·语义判定）\n")
     L.append(f"让 DeepSeek 当裁判，读检索结果和标准答案，判两件事：")
-    L.append(f"- **答案覆盖度**（检索到的笔记是否覆盖答案要点）：**{rec_mean:.0%}**（{rec_mean:.3f}）——几乎全覆盖")
-    L.append(f"- **排序质量**（相关笔记是否排前面）：**{prec_mean:.0%}**（{prec_mean:.3f}）")
+    L.append(f"- **答案覆盖度**（检索到的笔记是否覆盖答案要点）：**{rec_mean:.0%}**（{rec_mean:.3f}）——{_judge_comment(rec_mean)}")
+    L.append(f"- **排序质量**（相关笔记是否排前面）：**{prec_mean:.0%}**（{prec_mean:.3f}）——{_judge_comment(prec_mean)}")
     L.append("字面匹配（看文件名）看不见\"相关但不同笔记\"，语义裁判看得见——字面指标会低估真实检索质量。\n")
     L.append("## 方法（怎么测的，可复现）\n")
     n_neg = neg["queries"]
