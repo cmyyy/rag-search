@@ -6,40 +6,36 @@
 3. abbreviation 命中数（目标 ≥13/15）
 4. negative 误报数（目标 =0/15，用生产 guard 真实判定）
 
-方法：直接用 VaultRAGEngine.select_context 走完整生产路径（含 guard），
+方法：直接用 VaultRAGEngine.search 走生产路径（含 guard），
 正样本看注入来源、负样本看是否拦截。不走评测变体（避免口径偏差）。
+2026-08-28：select_context 已删除，生产路径 = search()（注入判定 verdict==correct）。
 """
-import sys, re
+import sys
+from pathlib import Path
 sys.path.insert(0, r"D:\AI\hermes-agent")
 sys.path.insert(0, r"D:\AI\hermes-agent\plugins\rag-search")
 sys.path.insert(0, r"D:\AI\hermes-agent\plugins\rag-search\vaultrag")
 from dotenv import load_dotenv
 load_dotenv(r"D:\AI\hermes-agent\.env", override=True)
 
-from vaultrag import VaultRAGEngine
+from vaultrag import VaultRAGEngine, _TOP_K
 from evals.eval_queries import get_queries
 
 engine = VaultRAGEngine()
 
 def call_engine(q):
-    """走生产 select_context，返回 (是否注入, 注入来源列表)。"""
+    """走生产 search，返回 (是否注入, 注入来源列表)。"""
     try:
-        r = engine.select_context(
-            [{"role": "system", "content": "You are helpful."},
-             {"role": "user", "content": q}],
-            conversation_messages=[],
-            incoming_message=q,
-            budget_tokens=4000,
-        )
+        r = engine.search(q, top_k=_TOP_K)
     except Exception as e:
         return False, [f"ERR:{str(e)[:50]}"]
-    if not r:
+    if r is None:
         return False, []
-    txt = str(r)
-    # 提取注入来源（<knowledge_context> 里的 来源: xxx.md）——文件名取最后一个 \ 后的 stem
-    srcs = re.findall(r"来源:.*?([^\\\\/]+)\.md", txt)
-    srcs = [s.strip() for s in srcs]
-    return True, srcs
+    hits = r.get("hits") or []
+    if r["verdict"] != "correct" or not hits:
+        return False, []
+    # 与判定口径一致：返回 stem（旧 select_context 路径用正则提取文件名）
+    return True, [Path(h["source"]).stem for h in hits]
 
 # ---- 4 类统计 ----
 queries = get_queries(None)

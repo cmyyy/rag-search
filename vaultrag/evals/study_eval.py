@@ -51,30 +51,33 @@ REPORT_PATH = _VAULTRAG_DIR / "evals" / "eval_report_v2.md"
 # =====================================================================
 
 def run_production_once(engine, queries, traces):
-    """跑一遍生产 select_context，返回逐条结果。"""
+    """跑一遍生产 search（工具/注入共用路径），返回逐条结果。
+
+    2026-08-28：select_context 已删除（context engine 时代遗留），
+    生产路径 = engine.search()——注入判定 = verdict==correct（有 hits）。
+    """
     engine._emit_trace = lambda t: traces.append(t)
     results = []
     for q in queries:
         qid, typ, query, expected = q["id"], q["type"], q["query"], q["expected_notes"]
         t0 = time.time()
         try:
-            r = engine.select_context(
-                [{"role": "system", "content": "You are helpful."},
-                 {"role": "user", "content": query}],
-                conversation_messages=[],
-                incoming_message=query,
-                budget_tokens=4000,
-            )
+            r = engine.search(query, top_k=_TOP_K)
         except Exception as e:
             results.append({"id": qid, "type": typ, "injected": False, "srcs": [], "err": str(e)[:60]})
             continue
-        if not r:
+        if r is None:
             results.append({"id": qid, "type": typ, "injected": False, "srcs": []})
             continue
-        txt = str(r)
-        srcs = re.findall(r"来源:.*?([^\\/]+)\.md", txt)
+        hits = r.get("hits") or []
+        if r["verdict"] != "correct" or not hits:
+            results.append({"id": qid, "type": typ, "injected": False, "srcs": [],
+                            "verdict": r["verdict"], "top1": r.get("top1_score")})
+            continue
+        srcs = [Path(h["source"]).stem for h in hits]
         results.append({"id": qid, "type": typ, "injected": True,
-                        "srcs": [s.strip() for s in srcs], "ms": (time.time() - t0) * 1000})
+                        "srcs": srcs, "verdict": "correct",
+                        "top1": r.get("top1_score"), "ms": (time.time() - t0) * 1000})
     return results
 
 

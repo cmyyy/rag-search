@@ -1,20 +1,17 @@
-"""vaultrag — Vault RAG context engine（个人知识库检索注入）。
+"""vaultrag — Vault RAG 检索引擎（rag-search 插件的核心）。
 
-一句话：把 Obsidian vault 变成 Hermes 的"外接知识库"——用户提问时，
-先向量检索相关笔记片段，注入请求上下文，模型基于自己的笔记回答。
+一句话：把 Obsidian vault 变成可检索的个人知识库——agent 调 rag_search
+工具（或评测/其他调用方）时，走 engine.search() 完成：
+关键词 + 语义混合检索 → 块级排序 → guard 三档判定 → 返回命中块。
 
-工作方式（挂在 Hermes 的 context engine 钩子上）：
-  1. 配置 context.engine = vaultrag（config.yaml）
-  2. 每回合请求前，Hermes 调用本引擎的 select_context(api_messages, ...)
-  3. 我们：取 incoming_message（用户本轮问题）→ 向量化 → vault 检索 top-k
-     → 把命中片段拼成 "Knowledge context" 消息插进请求列表 → 返回新列表
-  4. 任何失败（无 key / 索引不可用 / 异常）→ 返回 None → Hermes 原样放行
-     （fail-open，绝不打断正常对话）
+历史：本模块原是 Hermes 的 context engine（select_context 注入），
+2026-08-28 随插件化删除 select_context——生产未启用该角色
+（config context.engine=compressor），工具路径用 search()（单一事实源）。
 
-与内置 compressor 的关系：
-  - 本引擎是"选择"上下文（select_context），不是"压缩"上下文（compress）
-  - 压缩职责委托给内置 ContextCompressor：config 里 compression.* 的
-    阈值/策略全部继续生效，本引擎不重复实现
+设计要点：
+  - search() 是唯一检索入口：工具 handler、评测、任何调用方共用
+  - 任何失败（无 key / 索引不可用 / 异常）→ 返回 None / skipped（fail-open）
+  - 每次调用写结构化 trace（vault/.smart-env/vaultrag/trace.jsonl）可审计
 """
 import logging
 import os
@@ -22,16 +19,11 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.context_engine import ContextEngine
-
 from .embedding import EmbeddingClient
 from .retriever import VaultIndex, scan_vault
 
 logger = logging.getLogger(__name__)
 
-# 注入的消息角色：system 前缀保持字节稳定（prompt cache），
-# 检索结果放独立 user 消息——不碰 system、不改历史（cache 契约）。
-_INJECT_ROLE = "user"
 _TOP_K = 8
 _MAX_CHARS_PER_HIT = 600
 # 查询质量门槛（防噪音注入，2026-08-16 实测"好"/"改"等短消息命中全无关）：
@@ -47,9 +39,10 @@ _MIN_QUERY_CHARS = 2   # 查询少于 2 个字符直接跳过（1 字确认消�
 #   0.02 阈值误杀仅 5/84（全是检索本身失败，放行也无益）且误放负样本 0/15。
 # 0.02 由负样本分布上界 0.015 决定（自然分隔点），非对正样本拟合。
 _MIN_SCORE = 0.02
-_CORRECT_SCORE = 0.50  # top1 ≥ 0.50 → Correct，正常注入；[0.30, 0.50) → Ambiguous
 # 混合检索 + rerank 参数：
 _HYBRID_RECALL = 16    # 混合检索召回数（向量+BM25 各取 48 再 RRF 到 16）
+_RERANK_TOPK = 8     # rerank 打分项数（2026-08-29：对齐注入块数——实测相关块
+                     # 在 RRF top-8 覆盖 94%，打分 16 只多救 3 块（2%）却慢 ~4 倍）
 
 
 def _load_vaultrag_config() -> Dict[str, Any]:
@@ -77,7 +70,7 @@ def _load_vaultrag_config() -> Dict[str, Any]:
         return {}
 
 
-class VaultRAGEngine(ContextEngine):
+class VaultRAGEngine:
     name = "vaultrag"
 
     def __init__(self, vault_root: Optional[str] = None, embedding: Optional[EmbeddingClient] = None):
@@ -310,8 +303,8 @@ class VaultRAGEngine(ContextEngine):
         """
         return query
 
-    def search(self, query: str, top_k: int = _TOP_K) -> Optional[Dict[str, Any]]:
-        """统一检索入口——select_context 与 rag_search 工具共用（单一事实源）。
+    def _search_impl(self, query: str, top_k: int = _TOP_K) -> Optional[Dict[str, Any]]:
+        """检索核心（search 的内部实现，trace 由 search 包装统一 emit）。
 
         混合检索（BM25 + 向量 → RRF）→ 过滤 index 页 → guard 三档判定。
         返回结构化结果（hits/verdict/top1_score/margin/reason），拦截或失败也返回
@@ -354,8 +347,12 @@ class VaultRAGEngine(ContextEngine):
             # rank 3-5 被无关块挤掉）。guard 判定逻辑（top1/top2/margin/阈值）
             # 一行不动；rerank 失败回退 RRF 序（fail-open）。
             guard_query = self._enhance_guard_query(q, pool)
-            cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool]
-            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=len(pool))
+            # 打分项数 = _RERANK_TOPK（只对 RRF 前 8 打分）：
+            # 2026-08-29 实测 78 条正样本 127 个相关块，RRF top-8 覆盖 94%、
+            # 打分 16 项仅多救 3 块（2%）但延迟 ~4 倍（13s vs 3s）。
+            # 打分 8 项 = 只送 RRF 前 8 进 rerank——guard top1 基于前 8 里最好块。
+            cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool[:_RERANK_TOPK]]
+            guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=_RERANK_TOPK)
             if guard_scores:
                 top1 = float(guard_scores[0]["score"])
                 top2 = float(guard_scores[1]["score"]) if len(guard_scores) > 1 else 0.0
@@ -364,7 +361,7 @@ class VaultRAGEngine(ContextEngine):
                     idx = gs.get("index", -1)
                     if 0 <= idx < len(pool):
                         ordered.append(pool[idx])
-                hits = ordered[:top_k] if ordered else pool[:top_k]
+                hits = ordered[:top_k] if ordered else pool[:_RERANK_TOPK][:top_k]
             else:
                 hits = pool[:top_k]
                 top1 = float(hits[0]["score"]) if hits else 0.0
@@ -399,107 +396,33 @@ class VaultRAGEngine(ContextEngine):
             logger.warning("[vaultrag] search failed, fail-open: %s", e)
             return None
 
-    def select_context(self, request_messages, *, conversation_messages=None, incoming_message=None, budget_tokens=0):
-        """检索 vault，把命中片段注入请求。返回新消息列表；失败返回 None（fail-open）。"""
-        # 结构化 trace（RAGOps，2026-08-19）：每次调用记一条完整决策链，
-        # 用于离线分析"为什么不注入某查询"。逐字段填充，任何退出点都写 trace
-        # （fail-open：写失败不影响检索）。
-        trace = {
-            "query": "",
-            "length_gate_pass": False,
-            "recalled": 0,
-            "expanded_from": [],
-            "graph_stats": {},
-            "rerank_top_scores": [],
-            "verdict": "skipped",
-            "injected_count": 0,
-            "reason": "",
-        }
-        try:
-            # 1. 索引就绪（懒加载：首次调用构建/加载缓存）
-            if not self._index_ready:
-                self._index_ready = self.index.ensure_index()
-            if not self._index_ready:
-                trace["reason"] = "index-not-ready"
-                self._emit_trace(trace)
-                return None
+    def search(self, query: str, top_k: int = _TOP_K) -> Optional[Dict[str, Any]]:
+        """统一检索入口（单一事实源：工具 handler 与评测共用；select_context 已于
+        2026-08-28 删除——context engine 时代遗留，生产未启用）。
 
-            # 2. 拿本轮用户问题（注入的检索辅助消息不算）
-            query = self._extract_query(incoming_message, request_messages)
-            trace["query"] = query
-            if not query:
-                trace["reason"] = "no-query"
-                self._emit_trace(trace)
-                return None
+        每次调用写一条结构化 trace（RAGOps，与 select_context 时代同格式，
+        trace.jsonl 数据连续性保持）。
+        """
+        result = self._search_impl(query, top_k)
+        self._emit_search_trace(result)
+        return result
 
-            # 2.5 查询质量门槛（防噪音注入）：1 字确认消息（"好""嗯""谢谢"等）
-            #     信息量不足 → 直接跳过。阈值已降到 2（见 _MIN_QUERY_CHARS 注释）。
-            if len(query) < _MIN_QUERY_CHARS:
-                trace["reason"] = "length-gate"
-                self._emit_trace(trace)
-                return None
-            trace["length_gate_pass"] = True
-
-            # 3. 统一检索（单一事实源：select_context 与 rag_search 工具共用 search；
-            #    混合检索/过滤/guard 判定全部在 search 内，杜绝双份代码漂移，2026-08-26）
-            result = self.search(query, top_k=_TOP_K)
-            if result is None:
-                trace["reason"] = "exception"
-                self._emit_trace(trace)
-                return None
-
-            hits = result["hits"]
-            top1 = result["top1_score"]
-            trace["recalled"] = len(hits)
-            trace["guard_top1_score"] = round(top1, 4)
-            trace["top1_top2_margin"] = round(result["margin"], 4)
-            if result["multi_concept"]:
-                trace["multi_concept"] = True
-            if result.get("rerank_failed"):
-                trace["rerank_failed"] = True  # fallback 分数（BM25/RRF），与 rerank 分数不可比
-
-            if result["verdict"] in ("incorrect", "skipped", "ambiguous"):
-                trace["verdict"] = result["verdict"]
-                trace["reason"] = result["reason"]
-                self._emit_trace(trace)
-                return None
-            if not hits:
-                trace["reason"] = "no-hits"
-                self._emit_trace(trace)
-                return None
-            verdict = result["verdict"]
-
-            # 4. 拼注入消息（克隆消息列表，绝不修改原列表）
-            injected = self._build_injection(hits)
-            new_messages = list(request_messages)
-            new_messages.append(
-                {
-                    "role": _INJECT_ROLE,
-                    "content": injected,
-                    # 注意：不带任何自定义字段（如 metadata）——
-                    # 严格 OpenAI 兼容 provider 会拒收未知键，
-                    # 来源信息只进日志（2026-08-16 实测 DeepSeek 宽容，但不赌）
-                }
-            )
-            logger.info(
-                "[vaultrag] injected %d hits (query=%r, top=%.3f) sources=%s",
-                len(hits), query[:40], top1,
-                [h["source"] for h in hits],
-            )
-            trace["verdict"] = verdict
-            trace["injected_count"] = len(hits)
-            self._emit_trace(trace)
-            return new_messages
-        except Exception as e:
-            logger.warning("[vaultrag] select_context failed, passing through: %s", e)
-            try:
-                if not trace["reason"]:
-                    trace["reason"] = "exception"
-                trace["verdict"] = "skipped"
-                self._emit_trace(trace)
-            except Exception:
-                pass  # trace 本身也失败 → 彻底静默（fail-open）
-            return None
+    def _emit_search_trace(self, result: Optional[Dict[str, Any]]) -> None:
+        """把 search 结果写成 trace 决策链（fail-open）。"""
+        if result is None:
+            return
+        hits = result.get("hits") or []
+        self._emit_trace({
+            "query": result.get("query", ""),
+            "recalled": len(hits),
+            "verdict": result.get("verdict", "skipped"),
+            "reason": result.get("reason", ""),
+            "guard_top1_score": round(float(result.get("top1_score", 0.0)), 4),
+            "top1_top2_margin": round(float(result.get("margin", 0.0)), 4),
+            "multi_concept": bool(result.get("multi_concept")),
+            "rerank_failed": bool(result.get("rerank_failed")),
+            "injected_count": len(hits) if result.get("verdict") == "correct" else 0,
+        })
 
     # -- 辅助 -----------------------------------------------------------
 
@@ -521,29 +444,6 @@ class VaultRAGEngine(ContextEngine):
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             pass  # fail-open：trace 写失败绝不影响对话
-
-    @staticmethod
-    def _extract_query(incoming_message, request_messages) -> str:
-        """取本轮用户问题：优先 incoming_message，回退到列表里最后一条 user 消息。"""
-        if isinstance(incoming_message, dict):
-            content = incoming_message.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()[:500]
-        for m in reversed(request_messages):
-            if m.get("role") == "user" and isinstance(m.get("content"), str):
-                return m["content"].strip()[:500]
-        return ""
-
-    @staticmethod
-    def _build_injection(hits) -> str:
-        """把命中片段拼成一段给模型的上下文（带出处，模型可引用）。"""
-        parts = ["<knowledge_context>", "以下是用户知识库中与问题相关的片段（按相关度排序）："]
-        for i, h in enumerate(hits, 1):
-            text = h["text"].replace("\r", "")[:_MAX_CHARS_PER_HIT]
-            parts.append(f"[{i}] 来源: {h['source']}\n{text}")
-        parts.append("</knowledge_context>")
-        return "\n\n".join(parts)
-
 
 # =====================================================================
 # 斜杠命令：/llm-wiki-init <vault路径>
