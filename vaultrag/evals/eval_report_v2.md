@@ -39,6 +39,14 @@
 2. **rerank 全量重排**：cross-encoder 分数现在参与排序（原来只当守卫门槛、注入仍按 RRF 序）
 3. **注入策略对齐 CRAG 三档**：只注入强相关（top1 ≥ 0.60）；0.02~0.60 低置信区不注入（原来低置信也注入）
 
+代码改动（文件级）：
+
+- `retriever.py::search`：向量结果加 `chunk_id`（块身份，块级融合前提）
+- `retriever.py::hybrid_search`：RRF 融合键 `source` → `(source, chunk_id)`；删除 `by_source` 字典后写覆盖（last-wins 取 BM25 末位块），改为按融合分取每笔记最优块（`max_chunks_per_note=1`）
+- `__init__.py::search`：rerank `top_n=2` → `top_n=len(pool)`（全量打分）并按分数重排 hits（原来只当守卫门槛、注入仍按 RRF 序）；rerank 失败回退 RRF 序并标记 `rerank_failed`
+- `__init__.py::search` 注入判据：原来 top1 ≥ 0.02 就注入（ambiguous 也注入）→ 现在仅 top1 ≥ 0.60（correct）注入；margin 判据移除（rerank 全量打分后多相关块 margin 失真，0.60 强相关线取代）
+- `select_context` / `tools.py`：ambiguous 不注入 + handler 返回"低置信未返回"提示；trace 记 `rerank_failed` 供评测剔除不可比分数
+
 修复前后关键指标对比（同 93 条 golden cases、同一真实块评测口径）：
 
 | 指标 | 修复前 | 修复后 | 说明 |
