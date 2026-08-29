@@ -336,11 +336,9 @@ class VaultRAGEngine:
             if not candidates:
                 return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
                         "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "no-candidates"}
-            # 过滤 index 页（MOC：关键词齐全但无答案 → rerank 误判高分）
-            pool = [c for c in candidates if Path(c["source"]).stem != "index"]
-            if not pool:
-                return {"query": q, "hits": [], "verdict": "skipped", "top1_score": 0.0,
-                        "top2_score": 0.0, "margin": 0.0, "multi_concept": False, "rerank_failed": False, "reason": "no-pool"}
+            # 2026-08-29 死代码清理：原在此过滤 index 页（stem=="index"）——
+            # 索引构建层 _IGNORE_FILES 已恒定排除（retriever.py），该条件恒假。
+            pool = candidates
             # guard + 重排（2026-08-28 P0-2）：rerank 对 pool 全量打分
             # （top_n=len(pool)），既做 guard 门槛判定，又按分数重排 hits。
             # 原实现 top_n=2 只取门槛、hits 保持 RRF 序 → 排序类失败（相关块

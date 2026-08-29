@@ -46,8 +46,7 @@
 "RRF 融合原理是什么"
  → 长度门槛（≥2 字符）
  → 混合检索：BM25（中文 bigram，本地）+ bge-m3 向量（云端）各取 top-48
- → 块级 RRF 融合（k=60）→ 16 候选（每笔记取最优块）
- → 过滤 index 导航页
+ → 块级 RRF 融合（k=60）→ 16 候选（每笔记取最优块；index/log/SCHEMA 在索引构建时已排除）
  → cross-encoder rerank（bge-reranker-v2-m3）对前 8 候选打分
  → guard 三档：top1 < 0.02 incorrect / 0.02~0.60 ambiguous / ≥0.60 correct
  → correct → 注入 top-8 块 × 每块 600 字符（带来源标注）
