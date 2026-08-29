@@ -48,7 +48,7 @@
 |------|------|--------|
 | embedding | 云端 API，不跑本地小模型 | 对个人用户零负担：不下载模型、不占内存、不装 sentence-transformers 全家桶 |
 | provider 抽象 | OpenAI 兼容接口 + .env 配置 | 换厂商（硅基/智谱/阿里/OpenAI）只改配置，代码不动 |
-| 检索管线 | 混合检索（BM25+向量）+ RRF 融合 + cross-encoder rerank 精排 | 行业标准架构（arXiv 2604.01733：两阶段管线 Recall@5 0.695→0.816）；BM25 补精确匹配，rerank 补语义精排 |
+| 检索管线 | 混合检索（BM25+向量）+ RRF 融合 + cross-encoder rerank 精排 | 行业标准架构（arXiv 2604.01733：混合检索比单方法 recall +15-30%，两阶段 rerank 提升 nDCG@10 最高 28%）；BM25 补精确匹配，rerank 补语义精排 |
 | 噪音过滤 | 长度门槛 + BM25 源头过滤 + rerank 分数阈值 | 三层防线：短确认消息直接跳过；"好"这类词 BM25 分数趋零召回不到；长句无关由 rerank 压分拦截 |
 | 向量检索 | numpy 矩阵点积，不用 chromadb/faiss | 笔记规模（千级块）下足够；插件零重依赖（仅 numpy+openai，Hermes venv 自带） |
 | 分块 | 按 Markdown 标题（##/###）切块 | 块自带上下文；命中返回"笔记路径+块内容"，模型可引用出处 |
