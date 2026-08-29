@@ -40,7 +40,7 @@ try:
 except Exception:
     pass
 
-from vaultrag import VaultRAGEngine, _MIN_SCORE, _TOP_K, _MAX_CHARS_PER_HIT
+from vaultrag import VaultRAGEngine, _MIN_SCORE, _TOP_K, truncate_hit
 from evals.eval_queries import get_queries
 
 REPORT_PATH = _VAULTRAG_DIR / "evals" / "eval_report_v2.md"
@@ -254,7 +254,7 @@ def judge_semantic(engine, queries, results_last):
         sr = engine.search(q["query"], top_k=_TOP_K)
         if sr is None or sr["verdict"] == "incorrect" or not sr.get("hits"):
             continue  # 本次未注入（与 run 结果可能因概率波动不同，跳过）
-        ctx = [h["text"][:_MAX_CHARS_PER_HIT] for h in sr["hits"]]
+        ctx = [truncate_hit(h["text"]) for h in sr["hits"]]
         if not ctx:
             continue
         ans = _answers.get(q["id"], {}).get("answer", "")

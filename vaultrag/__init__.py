@@ -27,7 +27,25 @@ logger = logging.getLogger(__name__)
 _TOP_K = 8
 _MAX_CHARS_PER_HIT = 600  # 每块注入/打分截断（2026-08-30 复盘：600→900 实测零回归零提升，
                           # 成本 +50% token（8×900 vs 8×600），回退 600。统计上 900 让 90%
-                          # 块完整（p90=856），但评测无差——截断损伤证据不足（见 sub2 评审））
+                          # 块完整（p90=856），但评测无差——截断损伤证据不足（见 sub2 评审）；
+                          # 边界按行截断（truncate_hit）——硬截 99% 落在行中间、18% 在代码块内）
+
+
+def truncate_hit(text: str, limit: int = _MAX_CHARS_PER_HIT) -> str:
+    """按字符上限截断，边界回退到最近的行尾（不拦腰截断句子/代码行）。
+
+    2026-08-30：原 text[:limit] 硬截——实测 172/174（99%）的截断边界落在
+    行中间、31/174（18%）落在代码块内（``` 未闭合）。行边界截断让
+    注入文本/rerank 打分输入的边界干净（截断本身仍会丢尾部内容，但
+    不再产生畸形符号）。代价：每块少几个字符（放弃 600 内最后一行）。
+    """
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    nl = cut.rfind("\n")
+    if nl > 0:
+        cut = cut[:nl]
+    return cut.rstrip("\r")
 # 查询质量门槛（防噪音注入，2026-08-16 实测"好"/"改"等短消息命中全无关）：
 # ⚠ 2026-08-19 修复 bug：门槛从 4 降到 2——"MoA"/"RAG" 这类 3 字符英文缩写实查询
 #   被 len() 按字符数误杀（英文 1 字母 = 1 字符）。降到 2 只挡"好/行/改/继续"这类
@@ -351,7 +369,7 @@ class VaultRAGEngine:
             # 2026-08-29 实测 78 条正样本 127 个相关块，RRF top-8 覆盖 94%、
             # 打分 16 项仅多救 3 块（2%）但延迟 ~4 倍（13s vs 3s）。
             # 打分 8 项 = 只送 RRF 前 8 进 rerank——guard top1 基于前 8 里最好块。
-            cand_texts = [c["text"][:_MAX_CHARS_PER_HIT] for c in pool[:_RERANK_TOPK]]
+            cand_texts = [truncate_hit(c["text"]) for c in pool[:_RERANK_TOPK]]
             guard_scores = self.embedding.rerank(guard_query, cand_texts, top_n=_RERANK_TOPK)
             if guard_scores:
                 top1 = float(guard_scores[0]["score"])

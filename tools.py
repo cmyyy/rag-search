@@ -73,7 +73,7 @@ def _rag_search(args: dict, **kwargs) -> str:
     except (TypeError, ValueError):
         top_k = 4
 
-    from .vaultrag import _MAX_CHARS_PER_HIT
+    from .vaultrag import truncate_hit
 
     engine = _get_engine()
     result = engine.search(query, top_k=top_k)
@@ -115,6 +115,6 @@ def _rag_search(args: dict, **kwargs) -> str:
     lines = [f"[rag] 命中 {len(hits)} 条（verdict={verdict}, top1={top1:.3f}）:"]
     for i, h in enumerate(hits, 1):
         src = h.get("source", "?")
-        text = h.get("text", "")[:_MAX_CHARS_PER_HIT]
+        text = truncate_hit(h.get("text", ""))
         lines.append(f"{i}. 来源 {src}（score={float(h.get('score', 0)):.3f}）:\n{text}")
     return "\n".join(lines)
