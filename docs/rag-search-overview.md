@@ -168,7 +168,61 @@ L4: 0.52/0.68 → 0.95/0.98
 
 ---
 
-## 7. 已知短板与路线（诚实）
+## 7. 运行实例（真实 trace，2026-08-30 实测）
+
+查询：「**RRF 融合原理是什么**」——完整跑一遍生产路径，看每一步实际发生什么。
+
+### 7.1 候选池（混合检索 → 块级 RRF 融合，16 块，展示前 5）
+
+| 排名 | RRF 分 | 来源笔记 |
+|---|---|---|
+| 1 | 0.0269 | `concepts/rag-retrieval-pipeline.md` |
+| 2 | 0.0245 | `hermes-interview/hermes-vaultrag-interview.md` |
+| 3 | 0.0202 | `concepts/cross-encoder.md` |
+| 4 | 0.0196 | `hermes-interview/vaultrag-positioning-and-evolution.md` |
+| 5 | 0.0193 | `concepts/moa-mixture-of-agents.md` |
+
+### 7.2 guard rerank 打分（cross-encoder 对前 8 候选精排）
+
+| 分数 | 来源笔记 | 解读 |
+|---|---|---|
+| **0.922** | `concepts/rag-retrieval-pipeline.md` | 正确答案块——**断层式领先** |
+| 0.041 | `vaultrag-positioning-and-evolution.md` | 相关但非直接答案 |
+| 0.039 | `hermes-vaultrag-interview.md` | 面试笔记（提及 RRF） |
+| 0.006 | `concepts/cross-encoder.md` | 弱相关 |
+| 0.000 | `concepts/moa-mixture-of-agents.md` | 无关（RRF 融合召回但被压分） |
+
+**看点**：RRF 召回阶段是"粗筛"（5 个候选分数 0.019~0.027，差距小）；**rerank 精排把正确答案块拉到 0.922**——分数从"都差不多"变成"断层式区分"，这就是两阶段结构的意义。
+
+### 7.3 guard 判定与注入
+
+```
+top1 = 0.922 ≥ 0.60（correct 档）→ 注入 top-8 块
+top2 = 0.040 → margin = 0.882（明显领先）
+```
+
+注入 8 块（全部 ≤600 字符，无截断）：
+`rag-retrieval-pipeline` → `vaultrag-positioning-and-evolution` → `hermes-vaultrag-interview` → `cross-encoder` → `hermes-moa-context-injection` → `moa-mixture-of-agents` → `hermes-request-assembly-extras` → `kwargs`
+
+### 7.4 注入文本示例（第 1 块，358 字符完整）
+
+```text
+RAG 检索管线（混合检索 + RRF + rerank + guard） > 各环节技术拆解 > 3. RRF
+### 3. RRF（Reciprocal Rank Fusion，倒数排名融合）
+
+**是什么**：把多个检索结果的排名融合成一个。公式 Σ 1/(rank + k)，k=60。
+
+- 不关心绝对分数（BM25 和向量分数的量纲不同，不能直接加权），只看排名
+- 每个文档在"BM25 排名"和"向量排名"里各算一次倒数，相加排序
+- 出处：滑铁卢大学 + Google 2019
+[tags: ai, rag, retrieval, bm25, embedding, rrf, hybrid-search, concept]
+```
+
+**看点**：块自带「面包屑 → 标题 → 定义 → 要点」结构——模型看到前两行就知道这块讲什么；来源标注让回答可引用。
+
+---
+
+## 8. 已知短板与路线（诚实）
 
 | 短板 | 现状 | 路线 |
 |---|---|---|
