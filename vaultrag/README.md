@@ -10,7 +10,7 @@ rag-search 插件的核心引擎：把个人知识库（Obsidian vault / 任意�
 用户查询
   → [长度门槛] <2 字直接跳过（"好""嗯"确认消息；英文缩写"MoA"不误杀）
   → 混合检索：BM25 中文 bigram（本地）+ bge-m3 向量（云端）各取 top-48
-  → 块级 RRF 融合（k=60，每笔记取最优块）→ 16 候选
+  → 块级 RRF 融合（k=60，每笔记取最优块）→ 8 候选
   → cross-encoder rerank（bge-reranker-v2-m3）对前 8 候选打分（行边界截断）
   → [CRAG 三档] top1 ≥ 0.60 Correct（注入）/ 0.02~0.60 Ambiguous（低置信，不注入）/ < 0.02 Incorrect（拦截）
   → 注入 top-8 块 × 每块 600 字符（工具返回文本，带来源标注）
