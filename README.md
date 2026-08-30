@@ -76,4 +76,5 @@ context:
 ## 注意
 
 - embedding / rerank 需要外部 API（SiliconFlow 等 OpenAI 兼容端点），费用按调用计——工具只在 agent 主动调用时产生成本
-- guard 阈值带评测依据（见 `vaultrag/evals/`）；检索判定逻辑集中在引擎 `search()`（select_context 与工具共用，单一事实源），改动只动一处
+- guard 阈值带评测依据（见 `vaultrag/evals/`）；检索判定逻辑集中在引擎 `search()`（单一事实源，select_context 已删——工具/评测/任何调用方共用），改动只动一处
+- 完整设计/原理/参数/评测报告：`docs/rag-search-overview.md`
