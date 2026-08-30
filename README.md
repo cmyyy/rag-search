@@ -1,5 +1,7 @@
 # rag-search
 
+> 📄 **完整设计/原理/参数/评测/运行实例报告**：[`docs/rag-search-overview.md`](docs/rag-search-overview.md)（面试可讲）
+
 Hermes Agent 插件：`rag_search` 工具 —— 在本地知识库（个人笔记/文档库）做 **RAG 语义检索**，返回带来源标注的相关笔记片段。
 
 让 agent 自主判断何时使用：工具描述中性，不预设调用策略；`search_files` 等字面检索覆盖不了的问题，agent 会自行调用它做语义兜底。

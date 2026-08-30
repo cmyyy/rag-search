@@ -1,5 +1,7 @@
 # vaultrag — Vault RAG 检索引擎
 
+> 📄 **完整报告**：[`../docs/rag-search-overview.md`](../docs/rag-search-overview.md)（设计/原理/参数/评测/运行实例）
+
 rag-search 插件的核心引擎：把个人知识库（Obsidian vault / 任意笔记目录）变成可检索的语义知识库——混合检索 + 排序 + 置信度守卫，返回带来源标注的相关笔记块。
 
 > **完整报告见 [`../docs/rag-search-overview.md`](../docs/rag-search-overview.md)**（设计/原理/参数/评测/运行实例，面试可讲）；参数统计背书见 `evals/parameter_audit.md`。
