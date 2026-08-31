@@ -106,6 +106,6 @@
 | 0.800 | 9/77 | 0/15 |
 
 ### 语义判定（宽松尺·语义判定，DeepEval，DeepSeek 裁判）
-- Contextual Precision: 0.941±0.144（n=75）
-- Contextual Recall: 0.979±0.088（n=72）
+- Contextual Precision: 0.930±0.145（n=72）（2026-08-30 当前代码实测——600 截断+行边界+候选 8；报告 0.941 为 900 截断版，已回退）
+- Contextual Recall: 0.977±0.100（n=72）（同上）
 - judge 失败 case：6（已跳过）
