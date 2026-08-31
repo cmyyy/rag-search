@@ -1,6 +1,6 @@
 # rag-search
 
-> 📄 **完整设计/原理/参数/评测/运行实例报告**：[`docs/rag-search-overview.md`](docs/rag-search-overview.md)（面试可讲）
+> 📄 **完整设计/原理/参数/评测/运行实例报告**：[`docs/rag-search-overview.md`](docs/rag-search-overview.md)
 
 Hermes Agent 插件：`rag_search` 工具 —— 在本地知识库（个人笔记/文档库）做 **RAG 语义检索**，返回带来源标注的相关笔记片段。
 
@@ -73,7 +73,7 @@ context:
 
 ## 评测
 
-`vaultrag/evals/`：93 条 golden cases（查询 + 期望笔记 + 人写答案），四层评测（字面命中 / 守卫拦截 / 注入线敏感性 / DeepEval LLM-as-judge 语义判定），报告 `eval_report_v2.md` 含修复前后对比。复现：`python evals/study_eval.py`（3 次运行约 40 分钟）。
+`vaultrag/evals/`：93 条 golden cases（查询 + 期望笔记 + 人写答案），四层评测（字面命中 / 守卫拦截 / 注入线敏感性 / DeepEval LLM-as-judge 语义判定），报告自动生成（含修复前后对比）。复现：`python evals/study_eval.py`（3 次运行约 2 分钟）。
 
 ## 注意
 
