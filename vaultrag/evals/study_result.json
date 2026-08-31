@@ -1,8 +1,8 @@
 {
  "meta": {
-  "ts": "2026-08-30 01:52:50",
+  "ts": "2026-08-31 21:03:58",
   "vault": "D:\\llmwiki\\llm-wiki",
-  "vault_fp": "82 files / 646847 bytes",
+  "vault_fp": "82 files / 649065 bytes",
   "n_queries": 93,
   "runs": 3,
   "deepeval": "4.1.8"
@@ -11,9 +11,9 @@
   "single-hop": {
    "queries": 32,
    "hit1": [
-    29,
-    29,
-    29
+    30,
+    30,
+    30
    ],
    "recall5": [
     31.0,
@@ -29,14 +29,14 @@
   "multi-hop": {
    "queries": 34,
    "hit1": [
-    26,
-    26,
-    26
+    25,
+    25,
+    25
    ],
    "recall5": [
-    26.333333333333332,
-    26.333333333333332,
-    26.333333333333332
+    27.916666666666668,
+    27.916666666666668,
+    27.916666666666668
    ],
    "full": [
     28,
@@ -52,9 +52,9 @@
     6
    ],
    "recall5": [
-    8.0,
-    8.0,
-    8.0
+    9.0,
+    9.0,
+    9.0
    ],
    "full": [
     9,
@@ -75,66 +75,52 @@
   {
    "threshold": 0.2,
    "pos_miss": 2,
-   "pos_total": 77,
+   "pos_total": 78,
    "neg_fp": 1,
    "neg_total": 15
   },
   {
    "threshold": 0.3,
    "pos_miss": 3,
-   "pos_total": 77,
+   "pos_total": 78,
    "neg_fp": 1,
    "neg_total": 15
   },
   {
    "threshold": 0.4,
    "pos_miss": 4,
-   "pos_total": 77,
-   "neg_fp": 0,
+   "pos_total": 78,
+   "neg_fp": 1,
    "neg_total": 15
   },
   {
    "threshold": 0.5,
    "pos_miss": 5,
-   "pos_total": 77,
+   "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   },
   {
    "threshold": 0.6,
    "pos_miss": 5,
-   "pos_total": 77,
+   "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   },
   {
    "threshold": 0.7,
    "pos_miss": 6,
-   "pos_total": 77,
+   "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   },
   {
    "threshold": 0.8,
-   "pos_miss": 9,
-   "pos_total": 77,
+   "pos_miss": 10,
+   "pos_total": 78,
    "neg_fp": 0,
    "neg_total": 15
   }
  ],
- "judge_out": {
-  "Contextual Precision": {
-   "n": 75,
-   "mean": 0.9414428571428571,
-   "std": 0.1444700675283158
-  },
-  "Contextual Recall": {
-   "n": 72,
-   "mean": 0.9793981481481482,
-   "std": 0.0882579204865134
-  },
-  "_judge_failures": {
-   "n": 6
-  }
- }
+ "judge_out": {}
 }

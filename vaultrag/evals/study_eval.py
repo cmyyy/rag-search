@@ -449,7 +449,10 @@ def main():
         print(f"    负样本 top1 分数: min={min(neg_scores):.3f} med={statistics.median(neg_scores):.3f} max={max(neg_scores):.3f}")
 
     # L4：DeepEval（用最后一次结果）
-    if "--l4-cached" in sys.argv:
+    if "--skip-l4" in sys.argv:
+        # 只跑 L1-L3（2026-08-30：快速确认检索指标，跳过 LLM judge 重头）
+        judge_out = {}
+    elif "--l4-cached" in sys.argv:
         # 复用已验证的 judge 结果（检索输入不变：margin 修复不影响 hits 内容，仅 verdict 标注）
         import json as _json
 
