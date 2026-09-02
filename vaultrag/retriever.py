@@ -329,6 +329,8 @@ class VaultIndex:
         self._texts: List[str] = []       # 与矩阵行一一对应：检索命中 → 文本
         self._sources: List[str] = []     # 对应笔记路径
         self._vault_hash = ""
+        self._note_links: Dict[str, List[str]] = {}  # 双链图：source → [目标 source]（2026-08-30）
+        self._hub_sources: set = set()  # 汇总型笔记（出链多且内容薄）——检索不注入（2026-08-30）
 
     # -- 构建 ----------------------------------------------------------
 
@@ -384,6 +386,27 @@ class VaultIndex:
         self._matrix = matrix
         self._texts = texts
         self._sources = sources
+        # 双链图（2026-08-30）：wikilink 目标按 stem 匹配到实际笔记路径；
+        # 汇总型（hub）判定用原始出链数（links 全量，非仅存在的目标）
+        stem2src = {}
+        for d in docs:
+            stem2src.setdefault(Path(d["path"]).stem, []).append(d["path"])
+        self._note_links = {}
+        raw_link_count = {}
+        char_by_src = {}
+        for d in docs:
+            raw_link_count[d["path"]] = len(d.get("links") or [])
+            char_by_src[d["path"]] = sum(len(b) for _, b in d["chunks"])
+            targets = []
+            for name in d.get("links") or []:
+                for src in stem2src.get(name, []):
+                    if src != d["path"]:
+                        targets.append(src)
+            if targets:
+                self._note_links[d["path"]] = targets
+        # hub 阈值（可解释，2026-08-30）：出链 >= 8 且内容 < 2000 字符 = 链接列表型笔记
+        self._hub_sources = {p_ for p_, n in raw_link_count.items()
+                             if n >= self.HUB_MIN_LINKS and char_by_src.get(p_, 0) < self.HUB_MAX_CHARS}
         # BM25 索引：构建很快（bigram），每次启动重建，不持久化
         self.bm25 = BM25Index(texts, header_weight=3)
         try:
@@ -392,6 +415,8 @@ class VaultIndex:
                 matrix=matrix,
                 texts=np.array(texts, dtype=object),
                 sources=np.array(sources, dtype=object),
+                note_links=np.array([self._note_links], dtype=object),
+                hub_sources=np.array([sorted(self._hub_sources)], dtype=object),
             )
         except Exception:
             pass
@@ -403,6 +428,15 @@ class VaultIndex:
             self._matrix = data["matrix"]
             self._texts = list(data["texts"])
             self._sources = list(data["sources"])
+            # 双链图（2026-08-30）：旧缓存无 note_links 字段时保持空图（图增强自动关闭）
+            try:
+                self._note_links = dict(data["note_links"][0])
+            except (KeyError, IndexError, ValueError):
+                self._note_links = {}
+            try:
+                self._hub_sources = set(data["hub_sources"][0])
+            except (KeyError, IndexError, ValueError):
+                self._hub_sources = set()
             self.bm25 = BM25Index(self._texts, header_weight=3)
             return True
         except Exception:
@@ -426,8 +460,11 @@ class VaultIndex:
             for i in idx
         ]
 
+    HUB_MIN_LINKS = 8     # 汇总型判定：出链下限
+    HUB_MAX_CHARS = 2000  # 汇总型判定：内容上限（字符）
+
     def hybrid_search(self, query: str, query_vec: np.ndarray, top_k: int = 8,
-                      max_chunks_per_note: int = 1) -> List[Dict]:
+                      max_chunks_per_note: int = 1, graph_expand: bool = True) -> List[Dict]:
         """混合检索：向量 top-k + BM25 top-k → 块级 RRF 融合 → 返回 top_k。
 
         RRF（Reciprocal Rank Fusion，滑铁卢+Google 2019）：
@@ -473,7 +510,33 @@ class VaultIndex:
             results.append({**item, "rrf": rrf_score})
             if len(results) >= top_k:
                 break
-        return results
+
+        if not graph_expand or not self._note_links:
+            return results
+
+        # 2026-08-30 双向链接增强（ponytail 最小版）：
+        # 1) 汇总型笔记（hub：出链多且内容薄，_build 时判定）过滤——与 index 页同族，rerank 易误判高分
+        # 2) 一跳展开：非 hub 命中笔记的出链目标补进候选（每目标 1 块），multi-hop 找全
+        hub_srcs = self._hub_sources if graph_expand else set()
+        kept = [r for r in results if r["source"] not in hub_srcs]
+
+        # 一跳展开（只从保留下来的命中笔记出发，每目标取融合分最高的块）
+        if len(kept) < top_k:
+            seen = {r["source"] for r in kept}
+            added = []
+            for r in kept[:2]:  # 只从前 2 个命中笔记展开，控制规模
+                for target in self._note_links.get(r["source"], [])[:4]:  # 每笔记最多 4 目标
+                    if target in seen:
+                        continue
+                    seen.add(target)
+                    # 该目标笔记在 by_chunk 里融合分最高的块
+                    best = max((item for item in by_chunk.values()
+                                if item["source"] == target and item["source"] not in hub_srcs),
+                               key=lambda it: fusion.get((it["source"], it["chunk_id"]), 0.0), default=None)
+                    if best is not None:
+                        added.append({**best, "rrf": fusion.get((best["source"], best["chunk_id"]), 0.0)})
+            kept = kept + added
+        return kept[:top_k]
 
     @property
     def size(self) -> int:
